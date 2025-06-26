@@ -1,0 +1,33 @@
+# Configurações dos modelos de IA
+openai:
+  model: "gpt-4-turbo-preview"
+  max_tokens: 4096
+  temperature: 0.7
+  timeout: 60
+  max_retries: 3
+
+# Configurações por tipo de conteúdo
+content_configs:
+  vocab_generation:
+    max_tokens: 2048
+    temperature: 0.5
+  
+  teoria_generation:
+    max_tokens: 3072
+    temperature: 0.6
+  
+  frases_generation:
+    max_tokens: 2048
+    temperature: 0.7
+  
+  gramatica_generation:
+    max_tokens: 3072
+    temperature: 0.5
+  
+  tips_generation:
+    max_tokens: 2048
+    temperature: 0.8
+  
+  exercicios_generation:
+    max_tokens: 4096
+    temperature: 0.6

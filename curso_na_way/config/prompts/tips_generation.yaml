@@ -1,0 +1,17 @@
+system_prompt: |
+  Forneça dicas pedagógicas valiosas para fixação do conteúdo.
+  Inclua mnemônicos, truques de memorização e estratégias de aprendizado.
+
+user_prompt: |
+  TÓPICO: {input_text}
+  VOCABULÁRIO: {vocabulary_list}
+  NÍVEL: {level}
+  
+  Crie 5-8 TIPS práticos:
+  1. Dicas de memorização de vocabulário
+  2. Estratégias de pronúncia
+  3. Truques para lembrar regras gramaticais
+  4. Conexões com português (quando útil)
+  5. Aplicação prática no cotidiano
+  
+  Seja criativo e didático. Adeque ao nível {level}.

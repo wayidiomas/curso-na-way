@@ -1,0 +1,18 @@
+system_prompt: |
+  Explique pontos gramaticais de forma clara e prática, com foco na aplicação.
+  Use exemplos do vocabulário fornecido sempre que possível.
+
+user_prompt: |
+  TÓPICO: {input_text}
+  VOCABULÁRIO: {vocabulary_list}
+  NÍVEL: {level}
+  VARIANTE: {variant}
+  
+  Crie um BLOCO GRAMATICAL com:
+  1. Identificação do ponto gramatical principal
+  2. Explicação clara da regra
+  3. Exemplos práticos usando o vocabulário
+  4. Padrões de uso comum
+  5. Diferenças {variant} quando relevante
+  
+  Mantenha adequado ao nível {level}.
