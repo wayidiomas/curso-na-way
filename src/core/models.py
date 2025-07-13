@@ -1,66 +1,89 @@
-"""Modelos Pydantic do sistema."""
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
-from datetime import datetime
-from fastapi import UploadFile
-
-from .enums import CEFRLevel, EnglishVariant, ContentType, ApostilaStatus
-
-
-class VocabularyItem(BaseModel):
-    """Item de vocabulário."""
-    word: str = Field(..., description="Palavra em inglês")
-    definition: str = Field(..., description="Definição em português")
-    example: str = Field(..., description="Exemplo de uso em inglês")
-    level: CEFRLevel = Field(..., description="Nível CEFR")
-    context_image: Optional[str] = Field(None, description="ID da imagem relacionada")
+# config/models.py - ATUALIZADO PARA HIERARQUIA
+"""Configuração dos modelos de IA com suporte a hierarquia."""
+import os
+import yaml
+from typing import Dict, Any
+from pydantic_settings import BaseSettings
 
 
-class ContentSection(BaseModel):
-    """Seção de conteúdo da apostila."""
-    type: ContentType = Field(..., description="Tipo da seção")
-    title: str = Field(..., description="Título da seção")
-    content: str = Field(..., description="Conteúdo da seção")
-    vocabulary_used: List[str] = Field(default=[], description="Vocabulário utilizado")
-    created_at: datetime = Field(default_factory=datetime.now)
+class OpenAISettings(BaseSettings):
+    """Configurações do OpenAI."""
+    openai_api_key: str
+    openai_model: str = "gpt-4-turbo-preview"
+    openai_max_tokens: int = 4096
+    openai_temperature: float = 0.7
+    
+    class Config:
+        env_file = ".env"
 
 
-class ApostilaRequest(BaseModel):
-    """Request para criação de apostila."""
-    input_text: str = Field(..., description="Texto de entrada com contexto")
-    level: CEFRLevel = Field(..., description="Nível CEFR")
-    variant: EnglishVariant = Field(..., description="Variante do inglês")
-    professor_id: str = Field(..., description="ID do professor")
+class LangChainSettings(BaseSettings):
+    """Configurações do LangChain."""
+    langchain_tracing_v2: bool = True
+    langchain_api_key: str = ""
+    langchain_project: str = "curso-na-way"
+    
+    class Config:
+        env_file = ".env"
 
 
-class ApostilaResponse(BaseModel):
-    """Response com dados da apostila."""
-    id: str
-    title: str
-    status: ApostilaStatus
-    level: CEFRLevel
-    variant: EnglishVariant
-    professor_id: str
-    vocabulary: List[VocabularyItem] = []
-    sections: List[ContentSection] = []
-    images: List[str] = []
-    pdf_url: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+def get_openai_config() -> OpenAISettings:
+    """Retorna configurações do OpenAI."""
+    return OpenAISettings()
 
 
-class ImageAnalysisResult(BaseModel):
-    """Resultado da análise de imagem."""
-    image_id: str
-    description: str
-    objects_detected: List[str]
-    text_detected: Optional[str] = None
-    context_relevance: float = Field(..., ge=0.0, le=1.0)
+def get_langchain_config() -> LangChainSettings:
+    """Retorna configurações do LangChain."""
+    return LangChainSettings()
 
 
-class GenerationProgress(BaseModel):
-    """Progresso da geração de conteúdo."""
-    step: str
-    progress: int = Field(..., ge=0, le=100)
-    message: str
-    details: Optional[Dict[str, Any]] = None
+def load_model_configs() -> Dict[str, Any]:
+    """Carrega configurações dos modelos do YAML."""
+    config_path = os.path.join(os.path.dirname(__file__), "models.yaml")
+    
+    if not os.path.exists(config_path):
+        # Configuração padrão se arquivo não existir
+        return {
+            "openai": {
+                "model": "gpt-4-turbo-preview",
+                "max_tokens": 4096,
+                "temperature": 0.7,
+                "timeout": 60,
+                "max_retries": 3
+            },
+            "content_configs": {
+                "vocab_generation": {
+                    "max_tokens": 2048,
+                    "temperature": 0.5
+                },
+                "ivo_vocab_generation": {
+                    "max_tokens": 2048,
+                    "temperature": 0.5
+                },
+                "ivo_sentences_generation": {
+                    "max_tokens": 1536,
+                    "temperature": 0.6
+                },
+                "ivo_tips_generation": {
+                    "max_tokens": 2048,
+                    "temperature": 0.7
+                },
+                "ivo_grammar_generation": {
+                    "max_tokens": 2048,
+                    "temperature": 0.6
+                },
+                "ivo_assessments_generation": {
+                    "max_tokens": 3072,
+                    "temperature": 0.6
+                }
+            }
+        }
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+
+
+# Instâncias globais
+openai_config = get_openai_config()
+langchain_config = get_langchain_config()
+model_configs = load_model_configs()
