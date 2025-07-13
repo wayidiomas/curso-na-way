@@ -4,38 +4,53 @@ build-backend = "hatchling.build"
 
 [project]
 name = "curso-na-way"
-version = "0.1.0"
-description = "Sistema de Geração de Apostilas de Inglês com IA"
+version = "0.2.0"  # Incrementar para MCP
+description = "Sistema de Geração de Apostilas de Inglês com IA - IVO V2"
 authors = [{name = "Curso Na Way", email = "dev@cursoway.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # FastAPI Core
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
+    
+    # LangChain & AI
     "langchain>=0.1.0",
     "langchain-community>=0.0.10",
     "langchain-openai>=0.0.5",
+    "openai>=1.0.0",
+    
+    # Database & Auth
     "supabase>=2.0.0",
     "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
     "redis>=5.0.0",
+    
+    # HTTP & File Handling
     "python-multipart>=0.0.6",
+    "httpx>=0.25.0",
+    "aiofiles>=23.0.0",
+    
+    # Security
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
+    
     # PDF Generation
     "reportlab>=4.0.0",
     "weasyprint>=60.0",
+    
     # Image Processing
     "pillow>=10.0.0",
     "opencv-python>=4.8.0",
-    # AI/ML
-    "openai>=1.0.0",
-    "transformers>=4.35.0",
+    
+    # MCP Protocol (CORREÇÃO: usando versão experimental)
+    # Nota: MCP ainda está em desenvolvimento ativo
+    # Instalar separadamente: pip install git+https://github.com/modelcontextprotocol/python-sdk.git
+    
     # Additional
     "jinja2>=3.1.0",
     "python-dotenv>=1.0.0",
-    "pydantic-settings>=2.0.0",
-    "aiofiles>=23.0.0",
-    "httpx>=0.25.0",
+    "transformers>=4.35.0",
 ]
 
 # CORREÇÃO: Especificar onde estão os pacotes Python
@@ -50,6 +65,11 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.6.0",
     "pre-commit>=3.0.0",
+]
+
+# CORREÇÃO: MCP dependencies separadas para desenvolvimento
+mcp = [
+    # Instalar via: uv add --group mcp "git+https://github.com/modelcontextprotocol/python-sdk.git"
 ]
 
 [tool.uv]
