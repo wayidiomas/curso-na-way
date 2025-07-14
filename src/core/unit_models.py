@@ -1,9 +1,10 @@
-# src/core/unit_models.py - ATUALIZAÇÃO PARA HIERARQUIA
+# src/core/unit_models.py - ATUALIZADO COM VALIDAÇÃO IPA E MELHORIAS
 """Modelos específicos para o sistema IVO V2 com hierarquia Course → Book → Unit."""
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field, HttpUrl, validator
 from datetime import datetime
 from fastapi import UploadFile
+import re
 
 from .enums import (
     CEFRLevel, LanguageVariant, UnitType, AimType, 
@@ -54,40 +55,153 @@ class UnitCreateRequest(BaseModel):
 
 
 # =============================================================================
-# VOCABULARY MODELS - MANTÉM COMPATIBILIDADE
+# VOCABULARY MODELS - ATUALIZADO COM VALIDAÇÃO IPA COMPLETA
 # =============================================================================
 
 class VocabularyItem(BaseModel):
-    """Item de vocabulário com fonema."""
-    word: str = Field(..., description="Palavra no idioma alvo")
-    phoneme: str = Field(..., description="Transcrição fonética IPA")
-    definition: str = Field(..., description="Definição em português")
-    example: str = Field(..., description="Exemplo de uso")
-    word_class: str = Field(..., description="Classe gramatical (noun, verb, etc.)")
-    frequency_level: str = Field(..., description="Nível de frequência (high, medium, low)")
+    """Item de vocabulário com fonema IPA validado - VERSÃO COMPLETA."""
+    word: str = Field(..., min_length=1, max_length=50, description="Palavra no idioma alvo")
+    phoneme: str = Field(..., description="Transcrição fonética IPA válida")
+    definition: str = Field(..., min_length=5, max_length=200, description="Definição em português")
+    example: str = Field(..., min_length=10, max_length=300, description="Exemplo de uso em contexto")
+    word_class: str = Field(..., description="Classe gramatical")
+    frequency_level: str = Field("medium", description="Nível de frequência")
     
     # NOVOS CAMPOS PARA PROGRESSÃO
     context_relevance: Optional[float] = Field(None, ge=0.0, le=1.0, description="Relevância contextual")
     is_reinforcement: Optional[bool] = Field(False, description="É palavra de reforço?")
     first_introduced_unit: Optional[str] = Field(None, description="Unidade onde foi introduzida")
     
+    # NOVOS CAMPOS PARA IPA E FONEMAS
+    ipa_variant: str = Field("general_american", description="Variante IPA")
+    stress_pattern: Optional[str] = Field(None, description="Padrão de stress")
+    syllable_count: Optional[int] = Field(None, ge=1, le=8, description="Número de sílabas")
+    alternative_pronunciations: List[str] = Field(default=[], description="Pronúncias alternativas")
+    
+    @validator('phoneme')
+    def validate_ipa_phoneme(cls, v):
+        """Validar que o fonema usa símbolos IPA válidos."""
+        if not v:
+            raise ValueError("Fonema é obrigatório")
+        
+        # Verificar se está entre delimitadores IPA corretos
+        if not ((v.startswith('/') and v.endswith('/')) or 
+                (v.startswith('[') and v.endswith(']'))):
+            raise ValueError("Fonema deve estar entre / / (fonêmico) ou [ ] (fonético)")
+        
+        # Símbolos IPA válidos expandidos
+        valid_ipa_chars = set(
+            # Vogais básicas
+            'aæəɑɒɔɪɛɜɝɨɉʊʌʏybcdfɡhijklmnpqrstuɥvwxyz'
+            # Consoantes especiais
+            'θðʃʒʧʤŋɹɻɾɸβçʝɠʔ'
+            # Diacríticos e modificadores
+            'ʰʷʲˤ̥̩̯̰̹̜̟̘̙̞̠̃̊'
+            # Suprassegmentais
+            'ˈˌːˑ'
+            # Articulação
+            '̪̺̻̼̝̞̘̙̗̖̯̰̱̜̟̚'
+            # Caracteres especiais permitidos
+            ' .ː'
+        )
+        
+        # Remover delimitadores para validação
+        clean_phoneme = v.strip('/[]')
+        
+        # Verificar se contém apenas símbolos IPA válidos
+        invalid_chars = set(clean_phoneme) - valid_ipa_chars
+        if invalid_chars:
+            raise ValueError(f"Símbolos IPA inválidos encontrados: {invalid_chars}")
+        
+        # Verificar padrões comuns de erro
+        if '//' in clean_phoneme or '[[' in clean_phoneme:
+            raise ValueError("Delimitadores duplicados não são permitidos")
+        
+        # Verificar se tem pelo menos um som válido
+        if len(clean_phoneme.strip()) == 0:
+            raise ValueError("Fonema não pode estar vazio")
+        
+        return v
+    
+    @validator('word')
+    def validate_word_format(cls, v):
+        """Validar formato da palavra."""
+        if not v:
+            raise ValueError("Palavra é obrigatória")
+        
+        # Permitir letras, hífens, apóstrofes e pontos
+        if not re.match(r"^[a-zA-Z\-'\.]+$", v):
+            raise ValueError("Palavra deve conter apenas letras, hífens, apóstrofes ou pontos")
+        
+        return v.lower().strip()
+    
+    @validator('word_class')
+    def validate_word_class(cls, v):
+        """Validar classe gramatical."""
+        valid_classes = {
+            "noun", "verb", "adjective", "adverb", "preposition", 
+            "conjunction", "article", "pronoun", "interjection",
+            "modal", "auxiliary", "determiner", "numeral"
+        }
+        
+        if v.lower() not in valid_classes:
+            raise ValueError(f"Classe gramatical deve ser uma de: {', '.join(valid_classes)}")
+        
+        return v.lower()
+    
+    @validator('frequency_level')
+    def validate_frequency_level(cls, v):
+        """Validar nível de frequência."""
+        valid_levels = {"high", "medium", "low", "very_high", "very_low"}
+        
+        if v.lower() not in valid_levels:
+            raise ValueError(f"Nível de frequência deve ser um de: {', '.join(valid_levels)}")
+        
+        return v.lower()
+    
+    @validator('ipa_variant')
+    def validate_ipa_variant(cls, v):
+        """Validar variante IPA."""
+        valid_variants = {
+            "general_american", "received_pronunciation", "australian_english",
+            "canadian_english", "irish_english", "scottish_english"
+        }
+        
+        if v.lower() not in valid_variants:
+            raise ValueError(f"Variante IPA deve ser uma de: {', '.join(valid_variants)}")
+        
+        return v.lower()
+    
+    @validator('alternative_pronunciations', each_item=True)
+    def validate_alternative_pronunciations(cls, v):
+        """Validar pronúncias alternativas."""
+        # Aplicar a mesma validação IPA
+        if v and not ((v.startswith('/') and v.endswith('/')) or 
+                     (v.startswith('[') and v.endswith(']'))):
+            raise ValueError("Pronúncia alternativa deve seguir formato IPA")
+        return v
+    
     class Config:
         schema_extra = {
             "example": {
-                "word": "reservation",
-                "phoneme": "/ˌrez.ɚˈveɪ.ʃən/",
-                "definition": "reserva, ato de reservar",
-                "example": "I made a reservation for dinner at 7 PM.",
+                "word": "restaurant",
+                "phoneme": "/ˈrɛstərɑnt/",
+                "definition": "estabelecimento comercial onde se servem refeições",
+                "example": "We had dinner at a lovely Italian restaurant last night.",
                 "word_class": "noun",
                 "frequency_level": "high",
                 "context_relevance": 0.95,
-                "is_reinforcement": False
+                "is_reinforcement": False,
+                "ipa_variant": "general_american",
+                "stress_pattern": "primary_first",
+                "syllable_count": 3,
+                "alternative_pronunciations": ["/ˈrestərɑnt/"]
             }
         }
 
 
 class VocabularySection(BaseModel):
-    """Seção completa de vocabulário - ATUALIZADA COM RAG."""
+    """Seção completa de vocabulário - ATUALIZADA COM RAG E VALIDAÇÃO."""
     items: List[VocabularyItem] = Field(..., description="Lista de itens de vocabulário")
     total_count: int = Field(..., description="Total de palavras")
     context_relevance: float = Field(..., ge=0.0, le=1.0, description="Relevância contextual")
@@ -98,14 +212,41 @@ class VocabularySection(BaseModel):
     rag_context_used: Dict[str, Any] = Field(default={}, description="Contexto RAG utilizado")
     progression_level: str = Field(default="intermediate", description="Nível de progressão")
     
+    # NOVOS CAMPOS PARA IPA
+    phoneme_coverage: Dict[str, int] = Field(default={}, description="Cobertura de fonemas IPA")
+    pronunciation_variants: List[str] = Field(default=[], description="Variantes de pronúncia utilizadas")
+    phonetic_complexity: str = Field(default="medium", description="Complexidade fonética geral")
+    
     generated_at: datetime = Field(default_factory=datetime.now)
     
     @validator('total_count')
     def validate_total_count(cls, v, values):
+        """Validar contagem total."""
         items = values.get('items', [])
         if v != len(items):
             return len(items)
         return v
+    
+    @validator('items')
+    def validate_items_not_empty(cls, v):
+        """Validar que há pelo menos alguns itens."""
+        if len(v) == 0:
+            raise ValueError("Seção de vocabulário deve ter pelo menos 1 item")
+        
+        if len(v) > 50:
+            raise ValueError("Seção de vocabulário não deve ter mais de 50 itens")
+        
+        return v
+    
+    @validator('phonetic_complexity')
+    def validate_phonetic_complexity(cls, v):
+        """Validar complexidade fonética."""
+        valid_complexities = {"simple", "medium", "complex", "very_complex"}
+        
+        if v.lower() not in valid_complexities:
+            raise ValueError(f"Complexidade fonética deve ser uma de: {', '.join(valid_complexities)}")
+        
+        return v.lower()
 
 
 # =============================================================================
@@ -125,6 +266,10 @@ class TipsContent(BaseModel):
     vocabulary_coverage: List[str] = Field(default=[], description="Vocabulário coberto pela estratégia")
     complementary_strategies: List[str] = Field(default=[], description="Estratégias complementares sugeridas")
     selection_rationale: str = Field(default="", description="Por que esta estratégia foi selecionada")
+    
+    # NOVOS CAMPOS PARA FONEMAS
+    phonetic_focus: List[str] = Field(default=[], description="Fonemas ou padrões fonéticos focalizados")
+    pronunciation_tips: List[str] = Field(default=[], description="Dicas específicas de pronúncia")
 
 
 class GrammarContent(BaseModel):
@@ -161,6 +306,10 @@ class AssessmentActivity(BaseModel):
     skills_assessed: List[str] = Field(default=[], description="Habilidades avaliadas")
     vocabulary_focus: List[str] = Field(default=[], description="Vocabulário focado")
     
+    # NOVOS CAMPOS PARA FONEMAS
+    pronunciation_focus: bool = Field(False, description="Atividade foca em pronúncia")
+    phonetic_elements: List[str] = Field(default=[], description="Elementos fonéticos avaliados")
+    
     class Config:
         schema_extra = {
             "example": {
@@ -181,7 +330,9 @@ class AssessmentActivity(BaseModel):
                 "estimated_time": 10,
                 "difficulty_level": "intermediate",
                 "skills_assessed": ["vocabulary_recognition", "context_application"],
-                "vocabulary_focus": ["reservation", "service"]
+                "vocabulary_focus": ["reservation", "service"],
+                "pronunciation_focus": False,
+                "phonetic_elements": []
             }
         }
 
@@ -223,18 +374,22 @@ class UnitResponse(BaseModel):
     status: UnitStatus = Field(..., description="Status atual")
     
     # Content Sections
-    images: List[ImageInfo] = Field(default=[], description="Informações das imagens")
+    images: List["ImageInfo"] = Field(default=[], description="Informações das imagens")
     vocabulary: Optional[VocabularySection] = Field(None, description="Seção de vocabulário")
-    sentences: Optional[SentencesSection] = Field(None, description="Seção de sentences")
+    sentences: Optional["SentencesSection"] = Field(None, description="Seção de sentences")
     tips: Optional[TipsContent] = Field(None, description="Conteúdo TIPS (se lexical)")
     grammar: Optional[GrammarContent] = Field(None, description="Conteúdo GRAMMAR (se grammar)")
-    qa: Optional[QASection] = Field(None, description="Seção Q&A")
+    qa: Optional["QASection"] = Field(None, description="Seção Q&A")
     assessments: Optional[AssessmentSection] = Field(None, description="Seção de avaliação")
     
     # PROGRESSÃO PEDAGÓGICA (novos campos)
     strategies_used: List[str] = Field(default=[], description="Estratégias já usadas")
     assessments_used: List[str] = Field(default=[], description="Tipos de atividades já usadas")
     vocabulary_taught: List[str] = Field(default=[], description="Vocabulário ensinado nesta unidade")
+    
+    # NOVOS CAMPOS PARA FONEMAS
+    phonemes_introduced: List[str] = Field(default=[], description="Fonemas introduzidos nesta unidade")
+    pronunciation_focus: Optional[str] = Field(None, description="Foco de pronúncia da unidade")
     
     # CONTEXTO HIERÁRQUICO (informações derivadas)
     hierarchy_info: Optional[Dict[str, Any]] = Field(None, description="Informações da hierarquia")
@@ -269,6 +424,8 @@ class UnitResponse(BaseModel):
                 "strategies_used": ["collocations", "chunks"],
                 "assessments_used": ["gap_fill", "matching"],
                 "vocabulary_taught": ["reservation", "check-in", "availability", "suite"],
+                "phonemes_introduced": ["/ˌrezərˈveɪʃən/", "/ˈʧɛk ɪn/"],
+                "pronunciation_focus": "stress_patterns",
                 "quality_score": 0.92
             }
         }
@@ -289,6 +446,10 @@ class Sentence(BaseModel):
     reinforces_previous: List[str] = Field(default=[], description="Vocabulário anterior reforçado")
     introduces_new: List[str] = Field(default=[], description="Novo vocabulário introduzido")
     
+    # NOVOS CAMPOS PARA FONEMAS
+    phonetic_features: List[str] = Field(default=[], description="Características fonéticas destacadas")
+    pronunciation_notes: Optional[str] = Field(None, description="Notas de pronúncia")
+    
     class Config:
         schema_extra = {
             "example": {
@@ -297,7 +458,9 @@ class Sentence(BaseModel):
                 "context_situation": "restaurant_booking",
                 "complexity_level": "intermediate",
                 "reinforces_previous": [],
-                "introduces_new": ["reservation"]
+                "introduces_new": ["reservation"],
+                "phonetic_features": ["word_stress", "schwa_reduction"],
+                "pronunciation_notes": "Note the stress on 'reser-VA-tion'"
             }
         }
 
@@ -310,6 +473,10 @@ class SentencesSection(BaseModel):
     # NOVOS CAMPOS PARA RAG
     contextual_coherence: float = Field(default=0.8, description="Coerência contextual")
     progression_appropriateness: float = Field(default=0.8, description="Adequação à progressão")
+    
+    # NOVOS CAMPOS PARA FONEMAS
+    phonetic_progression: List[str] = Field(default=[], description="Progressão fonética nas sentences")
+    pronunciation_patterns: List[str] = Field(default=[], description="Padrões de pronúncia abordados")
     
     generated_at: datetime = Field(default_factory=datetime.now)
 
@@ -324,6 +491,10 @@ class QASection(BaseModel):
     # NOVOS CAMPOS PARA CONTEXTO
     vocabulary_integration: List[str] = Field(default=[], description="Vocabulário integrado")
     cognitive_levels: List[str] = Field(default=[], description="Níveis cognitivos das perguntas")
+    
+    # NOVOS CAMPOS PARA FONEMAS
+    pronunciation_questions: List[str] = Field(default=[], description="Perguntas sobre pronúncia")
+    phonetic_awareness: List[str] = Field(default=[], description="Consciência fonética desenvolvida")
 
 
 class ImageInfo(BaseModel):
@@ -359,6 +530,10 @@ class GenerationProgress(BaseModel):
     rag_context_loaded: bool = Field(False, description="Contexto RAG carregado?")
     precedent_units_found: int = Field(0, description="Unidades precedentes encontradas")
     vocabulary_overlap_analysis: Optional[Dict[str, Any]] = Field(None, description="Análise de sobreposição")
+    
+    # NOVOS CAMPOS PARA FONEMAS
+    phoneme_analysis_completed: bool = Field(False, description="Análise fonética completada?")
+    pronunciation_validation: Optional[Dict[str, Any]] = Field(None, description="Validação de pronúncia")
     
     details: Optional[Dict[str, Any]] = Field(None, description="Detalhes adicionais")
 
@@ -420,11 +595,152 @@ class CourseStatistics(BaseModel):
     vocabulary_progression: Dict[str, Any] = Field(default={}, description="Progressão de vocabulário")
     quality_progression: List[float] = Field(default=[], description="Progressão da qualidade")
     
+    # NOVOS CAMPOS PARA FONEMAS
+    phoneme_distribution: Dict[str, int] = Field(default={}, description="Distribuição de fonemas IPA")
+    pronunciation_variants: List[str] = Field(default=[], description="Variantes de pronúncia usadas")
+    phonetic_complexity_trend: List[str] = Field(default=[], description="Tendência de complexidade fonética")
+    
     last_updated: datetime = Field(default_factory=datetime.now)
 
 
 # =============================================================================
-# MIGRATION HELPERS (Para compatibilidade)
+# VOCABULARY GENERATION MODELS - NOVOS PARA PROMPT 6
+# =============================================================================
+
+class VocabularyGenerationRequest(BaseModel):
+    """Request para geração de vocabulário com imagens."""
+    images_context: List[Dict[str, Any]] = Field(..., description="Contexto das imagens analisadas")
+    target_count: int = Field(25, ge=10, le=50, description="Número desejado de palavras")
+    cefr_level: CEFRLevel = Field(..., description="Nível CEFR para o vocabulário")
+    language_variant: LanguageVariant = Field(..., description="Variante do idioma")
+    unit_type: UnitType = Field(..., description="Tipo de unidade")
+    
+    # CONFIGURAÇÕES DE IPA
+    ipa_variant: str = Field("general_american", description="Variante IPA desejada")
+    include_alternative_pronunciations: bool = Field(False, description="Incluir pronúncias alternativas")
+    phonetic_complexity: str = Field("medium", description="Complexidade fonética desejada")
+    
+    # CONTEXTO RAG
+    avoid_vocabulary: List[str] = Field(default=[], description="Palavras a evitar (já ensinadas)")
+    reinforce_vocabulary: List[str] = Field(default=[], description="Palavras para reforçar")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "images_context": [
+                    {
+                        "description": "Hotel reception with people checking in",
+                        "objects": ["desk", "receptionist", "guests", "luggage"],
+                        "themes": ["hospitality", "travel", "accommodation"]
+                    }
+                ],
+                "target_count": 25,
+                "cefr_level": "A2",
+                "language_variant": "american_english",
+                "unit_type": "lexical_unit",
+                "ipa_variant": "general_american",
+                "include_alternative_pronunciations": False,
+                "phonetic_complexity": "medium",
+                "avoid_vocabulary": ["hello", "goodbye"],
+                "reinforce_vocabulary": ["hotel", "room"]
+            }
+        }
+
+
+class VocabularyGenerationResponse(BaseModel):
+    """Response da geração de vocabulário."""
+    vocabulary_section: VocabularySection = Field(..., description="Seção de vocabulário gerada")
+    generation_metadata: Dict[str, Any] = Field(..., description="Metadados da geração")
+    rag_analysis: Dict[str, Any] = Field(..., description="Análise RAG aplicada")
+    quality_metrics: Dict[str, float] = Field(..., description="Métricas de qualidade")
+    
+    # MÉTRICAS DE IPA
+    phoneme_analysis: Dict[str, Any] = Field(..., description="Análise dos fonemas incluídos")
+    pronunciation_coverage: Dict[str, float] = Field(..., description="Cobertura de padrões de pronúncia")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "generation_metadata": {
+                    "generation_time_ms": 1500,
+                    "ai_model_used": "gpt-4o-mini",
+                    "mcp_analysis_included": True,
+                    "rag_context_applied": True
+                },
+                "rag_analysis": {
+                    "words_avoided": 3,
+                    "words_reinforced": 2,
+                    "new_words_generated": 20,
+                    "progression_appropriate": True
+                },
+                "quality_metrics": {
+                    "context_relevance": 0.92,
+                    "cefr_appropriateness": 0.95,
+                    "vocabulary_diversity": 0.88,
+                    "phonetic_accuracy": 0.97
+                },
+                "phoneme_analysis": {
+                    "total_unique_phonemes": 35,
+                    "most_common_phonemes": ["/ə/", "/ɪ/", "/eɪ/"],
+                    "stress_patterns": ["primary_first", "primary_second"],
+                    "syllable_distribution": {"1": 5, "2": 12, "3": 6, "4+": 2}
+                },
+                "pronunciation_coverage": {
+                    "vowel_sounds": 0.85,
+                    "consonant_clusters": 0.70,
+                    "stress_patterns": 0.90
+                }
+            }
+        }
+
+
+# =============================================================================
+# PHONETIC VALIDATION MODELS - NOVOS
+# =============================================================================
+
+class PhoneticValidationResult(BaseModel):
+    """Resultado da validação fonética de um item de vocabulário."""
+    word: str = Field(..., description="Palavra validada")
+    phoneme: str = Field(..., description="Fonema validado")
+    is_valid: bool = Field(..., description="Se a validação passou")
+    
+    validation_details: Dict[str, Any] = Field(..., description="Detalhes da validação")
+    suggestions: List[str] = Field(default=[], description="Sugestões de correção")
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Confiança na validação")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "word": "restaurant",
+                "phoneme": "/ˈrɛstərɑnt/",
+                "is_valid": True,
+                "validation_details": {
+                    "ipa_symbols_valid": True,
+                    "stress_marking_correct": True,
+                    "syllable_count_matches": True,
+                    "variant_appropriate": True
+                },
+                "suggestions": [],
+                "confidence_score": 0.98
+            }
+        }
+
+
+class BulkPhoneticValidation(BaseModel):
+    """Validação fonética em lote."""
+    total_items: int = Field(..., description="Total de itens validados")
+    valid_items: int = Field(..., description="Itens válidos")
+    invalid_items: int = Field(..., description="Itens inválidos")
+    
+    validation_results: List[PhoneticValidationResult] = Field(..., description="Resultados individuais")
+    overall_quality: float = Field(..., ge=0.0, le=1.0, description="Qualidade geral")
+    
+    common_errors: List[str] = Field(default=[], description="Erros comuns encontrados")
+    improvement_suggestions: List[str] = Field(default=[], description="Sugestões de melhoria")
+
+
+# =============================================================================
+# MIGRATION HELPERS (Para compatibilidade) - ATUALIZADO
 # =============================================================================
 
 class LegacyUnitAdapter(BaseModel):
@@ -453,6 +769,135 @@ class LegacyUnitAdapter(BaseModel):
             grammar=legacy_data.get("grammar"),
             qa=legacy_data.get("qa"),
             assessments=legacy_data.get("assessments"),
+            # NOVOS CAMPOS PARA COMPATIBILIDADE
+            phonemes_introduced=legacy_data.get("phonemes_introduced", []),
+            pronunciation_focus=legacy_data.get("pronunciation_focus"),
             created_at=legacy_data.get("created_at", datetime.now()),
             updated_at=legacy_data.get("updated_at", datetime.now())
         )
+    
+    @classmethod
+    def migrate_vocabulary_to_ipa(cls, legacy_vocabulary: List[Dict[str, Any]]) -> List[VocabularyItem]:
+        """Migrar vocabulário antigo para formato com IPA."""
+        migrated_items = []
+        
+        for item in legacy_vocabulary:
+            # Gerar fonema básico se não existir
+            phoneme = item.get("phoneme")
+            if not phoneme:
+                # Fonema placeholder - deveria ser gerado por IA
+                word = item.get("word", "")
+                phoneme = f"/placeholder_{word}/"
+            
+            try:
+                vocabulary_item = VocabularyItem(
+                    word=item.get("word", ""),
+                    phoneme=phoneme,
+                    definition=item.get("definition", ""),
+                    example=item.get("example", ""),
+                    word_class=item.get("word_class", "noun"),
+                    frequency_level=item.get("frequency_level", "medium"),
+                    context_relevance=item.get("context_relevance", 0.5),
+                    is_reinforcement=item.get("is_reinforcement", False),
+                    ipa_variant="general_american",
+                    syllable_count=item.get("syllable_count", 1)
+                )
+                migrated_items.append(vocabulary_item)
+            except Exception as e:
+                # Log erro e pular item inválido
+                print(f"Erro ao migrar item {item.get('word', 'unknown')}: {str(e)}")
+                continue
+        
+        return migrated_items
+
+
+# =============================================================================
+# UTILITY FUNCTIONS PARA IPA - NOVAS
+# =============================================================================
+
+def extract_phonemes_from_vocabulary(vocabulary_section: VocabularySection) -> List[str]:
+    """Extrair lista única de fonemas de uma seção de vocabulário."""
+    phonemes = set()
+    
+    for item in vocabulary_section.items:
+        # Extrair fonemas individuais do campo phoneme
+        clean_phoneme = item.phoneme.strip('/[]')
+        # Separar por espaços e pontos para obter fonemas individuais
+        individual_phonemes = clean_phoneme.replace('.', ' ').split()
+        
+        for phoneme in individual_phonemes:
+            if phoneme and len(phoneme) > 0:
+                phonemes.add(phoneme)
+    
+    return sorted(list(phonemes))
+
+
+def analyze_phonetic_complexity(vocabulary_items: List[VocabularyItem]) -> Dict[str, Any]:
+    """Analisar complexidade fonética de uma lista de itens de vocabulário."""
+    if not vocabulary_items:
+        return {"complexity": "unknown", "details": {}}
+    
+    syllable_counts = [item.syllable_count for item in vocabulary_items if item.syllable_count]
+    phoneme_lengths = [len(item.phoneme.strip('/[]').replace(' ', '')) for item in vocabulary_items]
+    
+    avg_syllables = sum(syllable_counts) / len(syllable_counts) if syllable_counts else 1
+    avg_phoneme_length = sum(phoneme_lengths) / len(phoneme_lengths) if phoneme_lengths else 5
+    
+    # Determinar complexidade baseada em métricas
+    if avg_syllables <= 1.5 and avg_phoneme_length <= 6:
+        complexity = "simple"
+    elif avg_syllables <= 2.5 and avg_phoneme_length <= 10:
+        complexity = "medium"
+    elif avg_syllables <= 3.5 and avg_phoneme_length <= 15:
+        complexity = "complex"
+    else:
+        complexity = "very_complex"
+    
+    return {
+        "complexity": complexity,
+        "details": {
+            "average_syllables": round(avg_syllables, 2),
+            "average_phoneme_length": round(avg_phoneme_length, 2),
+            "total_items": len(vocabulary_items),
+            "syllable_distribution": {
+                "1": len([s for s in syllable_counts if s == 1]),
+                "2": len([s for s in syllable_counts if s == 2]),
+                "3": len([s for s in syllable_counts if s == 3]),
+                "4+": len([s for s in syllable_counts if s >= 4])
+            }
+        }
+    }
+
+
+def validate_ipa_consistency(vocabulary_items: List[VocabularyItem]) -> Dict[str, Any]:
+    """Validar consistência IPA entre itens de vocabulário."""
+    variants = set(item.ipa_variant for item in vocabulary_items)
+    inconsistencies = []
+    
+    if len(variants) > 1:
+        inconsistencies.append(f"Múltiplas variantes IPA encontradas: {variants}")
+    
+    # Verificar padrões de stress inconsistentes
+    stress_patterns = [item.stress_pattern for item in vocabulary_items if item.stress_pattern]
+    unique_patterns = set(stress_patterns)
+    
+    if len(unique_patterns) > 3:
+        inconsistencies.append(f"Muitos padrões de stress diferentes: {unique_patterns}")
+    
+    return {
+        "is_consistent": len(inconsistencies) == 0,
+        "inconsistencies": inconsistencies,
+        "variants_used": list(variants),
+        "stress_patterns_used": list(unique_patterns)
+    }
+
+
+# =============================================================================
+# FORWARD REFERENCES FIX
+# =============================================================================
+
+# Resolver referências circulares
+UnitResponse.model_rebuild()
+VocabularySection.model_rebuild()
+SentencesSection.model_rebuild()
+QASection.model_rebuild()
