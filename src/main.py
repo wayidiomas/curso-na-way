@@ -701,3 +701,6 @@ async def api_v2_info(request: Request):
             "step_3": "POST /api/v2/books/{book_id}/units (criar units sequenciais)",
             "step_4": "GET /api/v2/units/{unit_id}/context (verificar RAG)",
             "step_5": "Próximos prompts: vocabulário, sentences, strategies, assessments"}}
+
+
+
