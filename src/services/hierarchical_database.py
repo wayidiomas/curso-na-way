@@ -1,5 +1,5 @@
-# src/services/hierarchical_database.py
-"""Serviço para operações de banco com hierarquia Course → Book → Unit."""
+# src/services/hierarchical_database.py - ATUALIZADO COM PAGINAÇÃO
+"""Serviço para operações de banco com hierarquia Course → Book → Unit e paginação."""
 
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
@@ -12,6 +12,10 @@ from src.core.hierarchical_models import (
     RAGStrategyContext, RAGAssessmentContext, ProgressionAnalysis,
     HierarchyValidationResult
 )
+from src.core.pagination import (
+    PaginationParams, SortParams, CourseFilterParams, BookFilterParams, 
+    UnitFilterParams, QueryBuilder
+)
 from src.core.enums import UnitStatus, CEFRLevel
 
 
@@ -19,13 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class HierarchicalDatabaseService:
-    """Serviço para operações hierárquicas no banco de dados."""
+    """Serviço para operações hierárquicas no banco de dados com paginação."""
     
     def __init__(self):
         self.supabase = get_supabase_client()
     
     # =============================================================================
-    # COURSE OPERATIONS
+    # COURSE OPERATIONS COM PAGINAÇÃO
     # =============================================================================
     
     async def create_course(self, course_data: CourseCreateRequest) -> Course:
@@ -69,7 +73,7 @@ class HierarchicalDatabaseService:
             raise
     
     async def list_courses(self) -> List[Course]:
-        """Listar todos os cursos."""
+        """Listar todos os cursos (método original mantido para compatibilidade)."""
         try:
             result = self.supabase.table("ivo_courses").select("*").order("created_at", desc=True).execute()
             
@@ -79,8 +83,132 @@ class HierarchicalDatabaseService:
             logger.error(f"Erro ao listar cursos: {str(e)}")
             raise
     
+    async def list_courses_paginated(
+        self,
+        pagination: PaginationParams,
+        sorting: SortParams,
+        filters: Optional[CourseFilterParams] = None
+    ) -> Tuple[List[Course], int]:
+        """
+        Listar cursos com paginação, ordenação e filtros.
+        
+        Returns:
+            Tuple[List[Course], int]: (cursos_da_pagina, total_count)
+        """
+        try:
+            # Construir query base
+            query = self.supabase.table("ivo_courses").select("*", count="exact")
+            count_query = self.supabase.table("ivo_courses").select("*", count="exact", head=True)
+            
+            # Aplicar filtros
+            if filters:
+                filter_dict = filters.to_dict()
+                
+                # Busca por texto
+                if filter_dict.get('search'):
+                    search_term = f"%{filter_dict['search']}%"
+                    query = query.or_(f"name.ilike.{search_term},description.ilike.{search_term}")
+                    count_query = count_query.or_(f"name.ilike.{search_term},description.ilike.{search_term}")
+                
+                # Filtros específicos
+                if filter_dict.get('language_variant'):
+                    query = query.eq("language_variant", filter_dict['language_variant'])
+                    count_query = count_query.eq("language_variant", filter_dict['language_variant'])
+                
+                if filter_dict.get('target_level'):
+                    query = query.contains("target_levels", [filter_dict['target_level']])
+                    count_query = count_query.contains("target_levels", [filter_dict['target_level']])
+                
+                if filter_dict.get('methodology'):
+                    query = query.contains("methodology", [filter_dict['methodology']])
+                    count_query = count_query.contains("methodology", [filter_dict['methodology']])
+                
+                # Filtros de data
+                if filter_dict.get('created_after'):
+                    query = query.gte("created_at", filter_dict['created_after'])
+                    count_query = count_query.gte("created_at", filter_dict['created_after'])
+                
+                if filter_dict.get('created_before'):
+                    query = query.lte("created_at", filter_dict['created_before'])
+                    count_query = count_query.lte("created_at", filter_dict['created_before'])
+            
+            # Obter contagem total
+            count_result = count_query.execute()
+            total_count = count_result.count
+            
+            # Aplicar ordenação
+            allowed_sort_fields = ["name", "created_at", "updated_at"]
+            sort_field = sorting.sort_by if sorting.sort_by in allowed_sort_fields else "created_at"
+            
+            query = query.order(sort_field, desc=sorting.is_descending)
+            
+            # Aplicar paginação
+            query = query.range(pagination.offset, pagination.offset + pagination.size - 1)
+            
+            # Executar query
+            result = query.execute()
+            
+            courses = [Course(**record) for record in result.data]
+            
+            logger.info(f"Cursos paginados: {len(courses)} de {total_count} total")
+            
+            return courses, total_count
+            
+        except Exception as e:
+            logger.error(f"Erro ao listar cursos paginados: {str(e)}")
+            raise
+    
+    async def update_course(self, course_id: str, course_data: CourseCreateRequest) -> Course:
+        """Atualizar curso."""
+        try:
+            update_data = {
+                "name": course_data.name,
+                "description": course_data.description,
+                "target_levels": [level.value for level in course_data.target_levels],
+                "language_variant": course_data.language_variant.value,
+                "methodology": course_data.methodology,
+                "updated_at": "now()"
+            }
+            
+            result = (
+                self.supabase.table("ivo_courses")
+                .update(update_data)
+                .eq("id", course_id)
+                .execute()
+            )
+            
+            if not result.data:
+                raise Exception("Falha ao atualizar curso")
+            
+            return Course(**result.data[0])
+            
+        except Exception as e:
+            logger.error(f"Erro ao atualizar curso {course_id}: {str(e)}")
+            raise
+    
+    async def delete_course(self, course_id: str) -> bool:
+        """Deletar curso e todos os recursos relacionados."""
+        try:
+            # Em uma implementação real, isso seria uma transação
+            # Por enquanto, simular deleção bem-sucedida
+            
+            # 1. Deletar units relacionadas
+            self.supabase.table("ivo_units").delete().eq("course_id", course_id).execute()
+            
+            # 2. Deletar books relacionados
+            self.supabase.table("ivo_books").delete().eq("course_id", course_id).execute()
+            
+            # 3. Deletar curso
+            result = self.supabase.table("ivo_courses").delete().eq("id", course_id).execute()
+            
+            return bool(result.data)
+            
+        except Exception as e:
+            logger.error(f"Erro ao deletar curso {course_id}: {str(e)}")
+            raise
+    
     # =============================================================================
-    # BOOK OPERATIONS
+    # BOOK OPERATIONS COM PAGINAÇÃO
     # =============================================================================
     
     async def create_book(self, course_id: str, book_data: BookCreateRequest) -> Book:
@@ -130,7 +258,7 @@ class HierarchicalDatabaseService:
             raise
     
     async def list_books_by_course(self, course_id: str) -> List[Book]:
-        """Listar books de um curso."""
+        """Listar books de um curso (método original mantido)."""
         try:
             result = (
                 self.supabase.table("ivo_books")
@@ -146,8 +274,65 @@ class HierarchicalDatabaseService:
             logger.error(f"Erro ao listar books do curso {course_id}: {str(e)}")
             raise
     
+    async def list_books_paginated(
+        self,
+        course_id: str,
+        pagination: PaginationParams,
+        sorting: SortParams,
+        filters: Optional[BookFilterParams] = None
+    ) -> Tuple[List[Book], int]:
+        """Listar books com paginação."""
+        try:
+            # Query base
+            query = (
+                self.supabase.table("ivo_books")
+                .select("*", count="exact")
+                .eq("course_id", course_id)
+            )
+            count_query = (
+                self.supabase.table("ivo_books")
+                .select("*", count="exact", head=True)
+                .eq("course_id", course_id)
+            )
+            
+            # Aplicar filtros
+            if filters:
+                filter_dict = filters.to_dict()
+                
+                if filter_dict.get('search'):
+                    search_term = f"%{filter_dict['search']}%"
+                    query = query.or_(f"name.ilike.{search_term},description.ilike.{search_term}")
+                    count_query = count_query.or_(f"name.ilike.{search_term},description.ilike.{search_term}")
+                
+                if filter_dict.get('target_level'):
+                    query = query.eq("target_level", filter_dict['target_level'])
+                    count_query = count_query.eq("target_level", filter_dict['target_level'])
+            
+            # Contagem total
+            count_result = count_query.execute()
+            total_count = count_result.count
+            
+            # Ordenação
+            allowed_sort_fields = ["name", "target_level", "sequence_order", "created_at"]
+            sort_field = sorting.sort_by if sorting.sort_by in allowed_sort_fields else "sequence_order"
+            
+            query = query.order(sort_field, desc=sorting.is_descending)
+            
+            # Paginação
+            query = query.range(pagination.offset, pagination.offset + pagination.size - 1)
+            
+            # Executar
+            result = query.execute()
+            books = [Book(**record) for record in result.data]
+            
+            return books, total_count
+            
+        except Exception as e:
+            logger.error(f"Erro ao listar books paginados: {str(e)}")
+            raise
+    
     # =============================================================================
-    # UNIT OPERATIONS
+    # UNIT OPERATIONS COM PAGINAÇÃO
     # =============================================================================
     
     async def create_unit(self, unit_data: HierarchicalUnitRequest) -> UnitWithHierarchy:
@@ -201,7 +386,7 @@ class HierarchicalDatabaseService:
             raise
     
     async def list_units_by_book(self, book_id: str) -> List[UnitWithHierarchy]:
-        """Listar unidades de um book."""
+        """Listar unidades de um book (método original mantido)."""
         try:
             result = (
                 self.supabase.table("ivo_units")
@@ -215,6 +400,75 @@ class HierarchicalDatabaseService:
             
         except Exception as e:
             logger.error(f"Erro ao listar unidades do book {book_id}: {str(e)}")
+            raise
+    
+    async def list_units_paginated(
+        self,
+        book_id: str,
+        pagination: PaginationParams,
+        sorting: SortParams,
+        filters: Optional[UnitFilterParams] = None
+    ) -> Tuple[List[UnitWithHierarchy], int]:
+        """Listar unidades com paginação."""
+        try:
+            # Query base
+            query = (
+                self.supabase.table("ivo_units")
+                .select("*", count="exact")
+                .eq("book_id", book_id)
+            )
+            count_query = (
+                self.supabase.table("ivo_units")
+                .select("*", count="exact", head=True)
+                .eq("book_id", book_id)
+            )
+            
+            # Aplicar filtros
+            if filters:
+                filter_dict = filters.to_dict()
+                
+                if filter_dict.get('search'):
+                    search_term = f"%{filter_dict['search']}%"
+                    query = query.or_(f"title.ilike.{search_term},context.ilike.{search_term}")
+                    count_query = count_query.or_(f"title.ilike.{search_term},context.ilike.{search_term}")
+                
+                if filter_dict.get('status'):
+                    query = query.eq("status", filter_dict['status'])
+                    count_query = count_query.eq("status", filter_dict['status'])
+                
+                if filter_dict.get('unit_type'):
+                    query = query.eq("unit_type", filter_dict['unit_type'])
+                    count_query = count_query.eq("unit_type", filter_dict['unit_type'])
+                
+                if filter_dict.get('cefr_level'):
+                    query = query.eq("cefr_level", filter_dict['cefr_level'])
+                    count_query = count_query.eq("cefr_level", filter_dict['cefr_level'])
+                
+                if filter_dict.get('quality_score_min'):
+                    query = query.gte("quality_score", filter_dict['quality_score_min'])
+                    count_query = count_query.gte("quality_score", filter_dict['quality_score_min'])
+            
+            # Contagem total
+            count_result = count_query.execute()
+            total_count = count_result.count
+            
+            # Ordenação
+            allowed_sort_fields = ["title", "sequence_order", "status", "cefr_level", "created_at", "quality_score"]
+            sort_field = sorting.sort_by if sorting.sort_by in allowed_sort_fields else "sequence_order"
+            
+            query = query.order(sort_field, desc=sorting.is_descending)
+            
+            # Paginação
+            query = query.range(pagination.offset, pagination.offset + pagination.size - 1)
+            
+            # Executar
+            result = query.execute()
+            units = [UnitWithHierarchy(**record) for record in result.data]
+            
+            return units, total_count
+            
+        except Exception as e:
+            logger.error(f"Erro ao listar unidades paginadas: {str(e)}")
             raise
     
     async def update_unit_status(self, unit_id: str, status: UnitStatus) -> bool:
@@ -255,7 +509,7 @@ class HierarchicalDatabaseService:
             raise
     
     # =============================================================================
-    # RAG FUNCTIONS
+    # RAG FUNCTIONS (mantidas do original)
     # =============================================================================
     
     async def get_taught_vocabulary(
@@ -496,33 +750,143 @@ class HierarchicalDatabaseService:
     # BULK OPERATIONS
     # =============================================================================
     
-    async def get_course_hierarchy(self, course_id: str) -> Dict[str, Any]:
-        """Buscar hierarquia completa do curso."""
+    async def get_course_hierarchy(self, course_id: str, max_depth: int = 3) -> Dict[str, Any]:
+        """Buscar hierarquia completa do curso com controle de profundidade."""
         try:
             # Buscar curso
             course = await self.get_course(course_id)
             if not course:
                 return {}
             
-            # Buscar books do curso
-            books = await self.list_books_by_course(course_id)
-            
-            # Para cada book, buscar suas units
             hierarchy = {
                 "course": course.dict(),
                 "books": []
             }
             
-            for book in books:
-                units = await self.list_units_by_book(book.id)
-                book_data = book.dict()
-                book_data["units"] = [unit.dict() for unit in units]
-                hierarchy["books"].append(book_data)
+            # Se max_depth >= 2, incluir books
+            if max_depth >= 2:
+                books = await self.list_books_by_course(course_id)
+                
+                for book in books:
+                    book_data = book.dict()
+                    
+                    # Se max_depth >= 3, incluir units
+                    if max_depth >= 3:
+                        units = await self.list_units_by_book(book.id)
+                        book_data["units"] = [unit.dict() for unit in units]
+                    else:
+                        book_data["units"] = []
+                    
+                    hierarchy["books"].append(book_data)
             
             return hierarchy
             
         except Exception as e:
             logger.error(f"Erro ao buscar hierarquia do curso {course_id}: {str(e)}")
+            return {}
+    
+    # =============================================================================
+    # SEARCH AND ANALYTICS
+    # =============================================================================
+    
+    async def search_across_hierarchy(
+        self,
+        search_term: str,
+        course_id: Optional[str] = None,
+        search_types: List[str] = ["courses", "books", "units"]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Buscar em toda a hierarquia."""
+        results = {
+            "courses": [],
+            "books": [],
+            "units": []
+        }
+        
+        try:
+            search_pattern = f"%{search_term}%"
+            
+            # Buscar courses
+            if "courses" in search_types:
+                query = self.supabase.table("ivo_courses").select("*")
+                if course_id:
+                    query = query.eq("id", course_id)
+                
+                course_results = query.or_(
+                    f"name.ilike.{search_pattern},description.ilike.{search_pattern}"
+                ).execute()
+                
+                results["courses"] = [Course(**record).dict() for record in course_results.data]
+            
+            # Buscar books
+            if "books" in search_types:
+                query = self.supabase.table("ivo_books").select("*")
+                if course_id:
+                    query = query.eq("course_id", course_id)
+                
+                book_results = query.or_(
+                    f"name.ilike.{search_pattern},description.ilike.{search_pattern}"
+                ).execute()
+                
+                results["books"] = [Book(**record).dict() for record in book_results.data]
+            
+            # Buscar units
+            if "units" in search_types:
+                query = self.supabase.table("ivo_units").select("*")
+                if course_id:
+                    query = query.eq("course_id", course_id)
+                
+                unit_results = query.or_(
+                    f"title.ilike.{search_pattern},context.ilike.{search_pattern}"
+                ).execute()
+                
+                results["units"] = [UnitWithHierarchy(**record).dict() for record in unit_results.data]
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Erro na busca hierárquica: {str(e)}")
+            return results
+    
+    async def get_system_analytics(self) -> Dict[str, Any]:
+        """Obter analytics do sistema."""
+        try:
+            # Contar recursos
+            courses_count = self.supabase.table("ivo_courses").select("*", count="exact", head=True).execute().count
+            books_count = self.supabase.table("ivo_books").select("*", count="exact", head=True).execute().count
+            units_count = self.supabase.table("ivo_units").select("*", count="exact", head=True).execute().count
+            
+            # Distribuição por status
+            status_distribution = {}
+            units_by_status = self.supabase.table("ivo_units").select("status", count="exact").execute()
+            
+            for unit in units_by_status.data:
+                status = unit.get("status", "unknown")
+                status_distribution[status] = status_distribution.get(status, 0) + 1
+            
+            # Distribuição por nível CEFR
+            cefr_distribution = {}
+            units_by_cefr = self.supabase.table("ivo_units").select("cefr_level", count="exact").execute()
+            
+            for unit in units_by_cefr.data:
+                level = unit.get("cefr_level", "unknown")
+                cefr_distribution[level] = cefr_distribution.get(level, 0) + 1
+            
+            return {
+                "system_totals": {
+                    "courses": courses_count,
+                    "books": books_count,
+                    "units": units_count
+                },
+                "status_distribution": status_distribution,
+                "cefr_distribution": cefr_distribution,
+                "completion_rate": (
+                    status_distribution.get("completed", 0) / max(units_count, 1)
+                ) * 100,
+                "generated_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao obter analytics: {str(e)}")
             return {}
 
 
