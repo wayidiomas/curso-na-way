@@ -1,4 +1,4 @@
-# src/mcp/mcp_image_client.py
+# src/mcp/mcp_image_client.py - CORREÇÃO DO CAMINHO
 """
 Cliente MCP para integração com o Image Analysis Server
 Implementação do PROMPT 3 do IVO V2 Guide - Lado Cliente
@@ -40,9 +40,9 @@ class MCPImageAnalysisClient:
         
     def _get_default_server_path(self) -> str:
         """Obter caminho padrão do servidor MCP."""
-        # Caminho relativo ao projeto
+        # CORREÇÃO: Caminho correto para o servidor
         project_root = Path(__file__).parent.parent.parent
-        return str(project_root / "src" / "mcp_servers" / "image_analysis_server.py")
+        return str(project_root / "src" / "mcp" / "image_analysis_server.py")
     
     async def connect(self) -> bool:
         """
@@ -53,6 +53,11 @@ class MCPImageAnalysisClient:
         """
         try:
             logger.info("🔌 Conectando ao MCP Image Analysis Server...")
+            
+            # Verificar se o arquivo do servidor existe
+            if not os.path.exists(self.server_path):
+                logger.error(f"❌ Servidor MCP não encontrado em: {self.server_path}")
+                return False
             
             # Configurar parâmetros do servidor stdio
             server_params = StdioServerParameters(
@@ -235,206 +240,12 @@ class MCPImageAnalysisClient:
             raise
 
 
-class ImageToBase64Converter:
-    """Utilitário para conversão de imagens para base64."""
-    
-    @staticmethod
-    def from_file_path(file_path: str) -> str:
-        """
-        Converter arquivo de imagem para base64.
-        
-        Args:
-            file_path: Caminho para o arquivo de imagem
-            
-        Returns:
-            String base64 da imagem
-        """
-        try:
-            with open(file_path, "rb") as image_file:
-                image_data = image_file.read()
-                base64_string = base64.b64encode(image_data).decode('utf-8')
-                return base64_string
-        except Exception as e:
-            logger.error(f"Erro ao converter imagem {file_path}: {str(e)}")
-            raise
-    
-    @staticmethod
-    def from_pil_image(pil_image: Image.Image, format: str = "JPEG") -> str:
-        """
-        Converter PIL Image para base64.
-        
-        Args:
-            pil_image: Objeto PIL Image
-            format: Formato da imagem (JPEG, PNG, etc.)
-            
-        Returns:
-            String base64 da imagem
-        """
-        try:
-            buffer = io.BytesIO()
-            pil_image.save(buffer, format=format)
-            image_data = buffer.getvalue()
-            base64_string = base64.b64encode(image_data).decode('utf-8')
-            return base64_string
-        except Exception as e:
-            logger.error(f"Erro ao converter PIL image: {str(e)}")
-            raise
-    
-    @staticmethod
-    def from_bytes(image_bytes: bytes) -> str:
-        """
-        Converter bytes de imagem para base64.
-        
-        Args:
-            image_bytes: Bytes da imagem
-            
-        Returns:
-            String base64 da imagem
-        """
-        try:
-            base64_string = base64.b64encode(image_bytes).decode('utf-8')
-            return base64_string
-        except Exception as e:
-            logger.error(f"Erro ao converter bytes: {str(e)}")
-            raise
-
-
-# LangChain Tools para integração
-class ImageAnalysisInput(BaseModel):
-    """Input schema para tool de análise de imagem."""
-    image_path: str = Field(..., description="Caminho para o arquivo de imagem")
-    context: str = Field("", description="Contexto educacional opcional")
-    cefr_level: str = Field("A2", description="Nível CEFR (A1-C2)")
-    unit_type: str = Field("lexical_unit", description="Tipo de unidade (lexical_unit/grammar_unit)")
-
-
-class VocabularySuggestionInput(BaseModel):
-    """Input schema para tool de sugestão de vocabulário."""
-    image_path: str = Field(..., description="Caminho para o arquivo de imagem")
-    target_count: int = Field(25, description="Número desejado de palavras")
-    cefr_level: str = Field("A2", description="Nível CEFR (A1-C2)")
-
-
-class ObjectDetectionInput(BaseModel):
-    """Input schema para tool de detecção de objetos."""
-    image_path: str = Field(..., description="Caminho para o arquivo de imagem")
-
-
-class MCPImageAnalysisTool(BaseTool):
-    """LangChain tool para análise de imagem via MCP."""
-    
-    name = "mcp_image_analysis"
-    description = "Analyze image for educational content creation using MCP server"
-    args_schema = ImageAnalysisInput
-    
-    def __init__(self):
-        super().__init__()
-        self.client = MCPImageAnalysisClient()
-    
-    async def _arun(self, image_path: str, context: str = "", cefr_level: str = "A2", unit_type: str = "lexical_unit") -> str:
-        """Async implementation."""
-        try:
-            # Conectar se necessário
-            if not self.client.is_connected:
-                await self.client.connect()
-            
-            # Converter imagem para base64
-            image_data = ImageToBase64Converter.from_file_path(image_path)
-            
-            # Fazer análise
-            result = await self.client.analyze_image(
-                image_data=image_data,
-                context=context,
-                cefr_level=cefr_level,
-                unit_type=unit_type
-            )
-            
-            return json.dumps(result, indent=2)
-            
-        except Exception as e:
-            return f"Erro na análise de imagem: {str(e)}"
-    
-    def _run(self, image_path: str, context: str = "", cefr_level: str = "A2", unit_type: str = "lexical_unit") -> str:
-        """Sync implementation."""
-        import asyncio
-        return asyncio.run(self._arun(image_path, context, cefr_level, unit_type))
-
-
-class MCPVocabularySuggestionTool(BaseTool):
-    """LangChain tool para sugestão de vocabulário via MCP."""
-    
-    name = "mcp_vocabulary_suggestion"
-    description = "Suggest vocabulary words based on image content using MCP server"
-    args_schema = VocabularySuggestionInput
-    
-    def __init__(self):
-        super().__init__()
-        self.client = MCPImageAnalysisClient()
-    
-    async def _arun(self, image_path: str, target_count: int = 25, cefr_level: str = "A2") -> str:
-        """Async implementation."""
-        try:
-            if not self.client.is_connected:
-                await self.client.connect()
-            
-            image_data = ImageToBase64Converter.from_file_path(image_path)
-            
-            result = await self.client.suggest_vocabulary(
-                image_data=image_data,
-                target_count=target_count,
-                cefr_level=cefr_level
-            )
-            
-            return json.dumps(result, indent=2)
-            
-        except Exception as e:
-            return f"Erro na sugestão de vocabulário: {str(e)}"
-    
-    def _run(self, image_path: str, target_count: int = 25, cefr_level: str = "A2") -> str:
-        """Sync implementation."""
-        import asyncio
-        return asyncio.run(self._arun(image_path, target_count, cefr_level))
-
-
-class MCPObjectDetectionTool(BaseTool):
-    """LangChain tool para detecção de objetos via MCP."""
-    
-    name = "mcp_object_detection"
-    description = "Detect objects and analyze scenes in image using MCP server"
-    args_schema = ObjectDetectionInput
-    
-    def __init__(self):
-        super().__init__()
-        self.client = MCPImageAnalysisClient()
-    
-    async def _arun(self, image_path: str) -> str:
-        """Async implementation."""
-        try:
-            if not self.client.is_connected:
-                await self.client.connect()
-            
-            image_data = ImageToBase64Converter.from_file_path(image_path)
-            
-            result = await self.client.detect_objects(image_data=image_data)
-            
-            return json.dumps(result, indent=2)
-            
-        except Exception as e:
-            return f"Erro na detecção de objetos: {str(e)}"
-    
-    def _run(self, image_path: str) -> str:
-        """Sync implementation."""
-        import asyncio
-        return asyncio.run(self._arun(image_path))
-
-
-# Service class para integração fácil
+# Service class para integração fácil com endpoints V2
 class MCPImageService:
     """Serviço principal para análise de imagens via MCP."""
     
     def __init__(self):
         self.client = MCPImageAnalysisClient()
-        self.converter = ImageToBase64Converter()
     
     async def __aenter__(self):
         """Context manager async entry."""
@@ -445,104 +256,61 @@ class MCPImageService:
         """Context manager async exit."""
         await self.client.disconnect()
     
-    async def analyze_uploaded_images(
+    async def analyze_uploaded_images_for_unit(
         self,
-        image_files: List[str],
+        image_files_b64: List[str],
         context: str = "",
         cefr_level: str = "A2",
         unit_type: str = "lexical_unit"
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
-        Analisar múltiplas imagens carregadas.
+        Analisar múltiplas imagens já convertidas para base64.
         
         Args:
-            image_files: Lista de caminhos para arquivos de imagem
+            image_files_b64: Lista de imagens em base64
             context: Contexto educacional
             cefr_level: Nível CEFR
             unit_type: Tipo de unidade
             
         Returns:
-            Lista de análises das imagens
+            Análise consolidada das imagens
         """
-        results = []
+        analyses = []
+        all_vocabulary = []
         
-        for i, image_file in enumerate(image_files):
+        for i, image_b64 in enumerate(image_files_b64):
             try:
-                logger.info(f"📸 Analisando imagem {i+1}/{len(image_files)}: {image_file}")
+                logger.info(f"📸 Analisando imagem {i+1}/{len(image_files_b64)}")
                 
-                # Converter para base64
-                image_data = self.converter.from_file_path(image_file)
-                
-                # Fazer análise
+                # Análise individual da imagem
                 analysis = await self.client.analyze_image(
-                    image_data=image_data,
+                    image_data=image_b64,
                     context=context,
                     cefr_level=cefr_level,
                     unit_type=unit_type
                 )
                 
-                # Adicionar metadados
-                analysis["image_info"] = {
-                    "filename": os.path.basename(image_file),
-                    "filepath": image_file,
-                    "sequence": i + 1
-                }
-                
-                results.append(analysis)
-                
-            except Exception as e:
-                logger.error(f"❌ Erro ao analisar {image_file}: {str(e)}")
-                results.append({
-                    "error": str(e),
-                    "image_info": {
-                        "filename": os.path.basename(image_file),
-                        "filepath": image_file,
-                        "sequence": i + 1
-                    }
-                })
-        
-        return results
-    
-    async def generate_vocabulary_from_images(
-        self,
-        image_files: List[str],
-        total_target_words: int = 25,
-        cefr_level: str = "A2"
-    ) -> Dict[str, Any]:
-        """
-        Gerar vocabulário consolidado de múltiplas imagens.
-        
-        Args:
-            image_files: Lista de caminhos para imagens
-            total_target_words: Total de palavras desejadas
-            cefr_level: Nível CEFR
-            
-        Returns:
-            Vocabulário consolidado e deduplicado
-        """
-        all_vocabulary = []
-        words_per_image = max(1, total_target_words // len(image_files))
-        
-        for image_file in image_files:
-            try:
-                image_data = self.converter.from_file_path(image_file)
-                
+                # Sugerir vocabulário específico
                 vocabulary = await self.client.suggest_vocabulary(
-                    image_data=image_data,
-                    target_count=words_per_image,
+                    image_data=image_b64,
+                    target_count=15,  # Menos por imagem para não sobrecarregar
                     cefr_level=cefr_level
                 )
                 
-                # Adicionar fonte da imagem
-                for word_item in vocabulary:
-                    word_item["source_image"] = os.path.basename(image_file)
+                analysis["vocabulary_suggestions"] = vocabulary
+                analysis["image_sequence"] = i + 1
                 
+                analyses.append(analysis)
                 all_vocabulary.extend(vocabulary)
                 
             except Exception as e:
-                logger.warning(f"Erro ao processar {image_file}: {str(e)}")
+                logger.error(f"❌ Erro ao analisar imagem {i+1}: {str(e)}")
+                analyses.append({
+                    "error": str(e),
+                    "image_sequence": i + 1
+                })
         
-        # Deduplicar vocabulário
+        # Consolidar vocabulário único
         seen_words = set()
         unique_vocabulary = []
         
@@ -552,86 +320,72 @@ class MCPImageService:
                 seen_words.add(word)
                 unique_vocabulary.append(word_item)
         
-        # Ordenar por relevância se disponível
+        # Ordenar por relevância
         unique_vocabulary.sort(
             key=lambda x: x.get("relevance_score", 5), 
             reverse=True
         )
         
-        # Limitar ao número alvo
-        final_vocabulary = unique_vocabulary[:total_target_words]
+        # Limitar a 25 palavras finais
+        final_vocabulary = unique_vocabulary[:25]
         
         return {
-            "vocabulary": final_vocabulary,
-            "total_words": len(final_vocabulary),
-            "target_words": total_target_words,
-            "source_images": [os.path.basename(f) for f in image_files],
-            "deduplication_stats": {
-                "original_count": len(all_vocabulary),
-                "unique_count": len(unique_vocabulary),
-                "final_count": len(final_vocabulary)
+            "success": True,
+            "individual_analyses": analyses,
+            "consolidated_vocabulary": {
+                "vocabulary": final_vocabulary,
+                "total_words": len(final_vocabulary),
+                "deduplication_stats": {
+                    "original_count": len(all_vocabulary),
+                    "unique_count": len(unique_vocabulary),
+                    "final_count": len(final_vocabulary)
+                }
             },
-            "cefr_level": cefr_level,
+            "summary": {
+                "total_images": len(image_files_b64),
+                "successful_analyses": len([a for a in analyses if "error" not in a]),
+                "context": context,
+                "cefr_level": cefr_level,
+                "unit_type": unit_type
+            },
             "generated_at": datetime.now().isoformat()
         }
 
 
-# Função de conveniência para uso direto
-async def analyze_images_for_unit(
-    image_files: List[str],
+# Função de conveniência para uso nos endpoints V2
+async def analyze_images_for_unit_creation(
+    image_files_b64: List[str],
     context: str = "",
     cefr_level: str = "A2",
     unit_type: str = "lexical_unit"
 ) -> Dict[str, Any]:
     """
-    Função de conveniência para analisar imagens para uma unidade.
+    Função específica para análise de imagens durante criação de unidades.
     
     Args:
-        image_files: Lista de arquivos de imagem
+        image_files_b64: Lista de imagens em base64
         context: Contexto educacional
         cefr_level: Nível CEFR
         unit_type: Tipo de unidade
         
     Returns:
-        Análise completa das imagens
+        Análise pronta para integração com API V2
     """
-    async with MCPImageService() as service:
-        # Fazer análises individuais
-        analyses = await service.analyze_uploaded_images(
-            image_files=image_files,
-            context=context,
-            cefr_level=cefr_level,
-            unit_type=unit_type
-        )
-        
-        # Gerar vocabulário consolidado
-        vocabulary_result = await service.generate_vocabulary_from_images(
-            image_files=image_files,
-            total_target_words=25,
-            cefr_level=cefr_level
-        )
-        
+    try:
+        async with MCPImageService() as service:
+            result = await service.analyze_uploaded_images_for_unit(
+                image_files_b64=image_files_b64,
+                context=context,
+                cefr_level=cefr_level,
+                unit_type=unit_type
+            )
+            
+            return result
+            
+    except Exception as e:
+        logger.error(f"❌ Erro na análise de imagens para unidade: {str(e)}")
         return {
-            "individual_analyses": analyses,
-            "consolidated_vocabulary": vocabulary_result,
-            "summary": {
-                "total_images": len(image_files),
-                "successful_analyses": len([a for a in analyses if "error" not in a]),
-                "total_vocabulary_suggested": vocabulary_result["total_words"],
-                "context": context,
-                "cefr_level": cefr_level,
-                "unit_type": unit_type
-            }
+            "success": False,
+            "error": str(e),
+            "message": "Falha na análise de imagens via MCP"
         }
-
-
-# Export das classes e funções principais
-__all__ = [
-    "MCPImageAnalysisClient",
-    "MCPImageService", 
-    "ImageToBase64Converter",
-    "MCPImageAnalysisTool",
-    "MCPVocabularySuggestionTool", 
-    "MCPObjectDetectionTool",
-    "analyze_images_for_unit"
-]
