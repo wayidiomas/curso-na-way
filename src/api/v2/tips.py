@@ -1,7 +1,7 @@
 # src/api/v2/tips.py
 """
 Endpoints para geração de estratégias TIPS para unidades lexicais.
-Implementação das 6 estratégias TIPS do IVO V2 Guide.
+Implementação das 6 estratégias TIPS do IVO V2 Guide com seleção inteligente RAG.
 """
 
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -170,7 +170,7 @@ async def generate_tips_for_unit(
         # 11. Atualizar status da unidade
         await hierarchical_db.update_unit_status(unit_id, "assessments_pending")
         
-        # 12. Log de auditoria
+        # 12. Log de auditoria - CORRIGIDO: tips_content ao invés de tips_data
         await audit_logger_instance.log_content_generation(
             request=request,
             generation_type="tips",
@@ -183,7 +183,9 @@ async def generate_tips_for_unit(
                 "examples_count": len(tips_content.examples),
                 "practice_suggestions": len(tips_content.practice_suggestions),
                 "memory_techniques": len(tips_content.memory_techniques),
-                "selection_rationale": tips_content.selection_rationale
+                "selection_rationale": tips_content.selection_rationale,
+                "complementary_strategies": tips_content.complementary_strategies,
+                "strategy_diversity_score": len(set(used_strategies)) / 6 if used_strategies else 0
             },
             ai_usage={
                 "model": "gpt-4o-mini",
@@ -255,6 +257,13 @@ async def generate_tips_for_unit(
             status_code=500,
             detail=f"Erro interno na geração de TIPS: {str(e)}"
         )
+
+
+# CORRIGIDO: Removidas funções duplicadas _analyze_tips_content_quality, 
+# _analyze_vocabulary_integration, _analyze_pedagogical_effectiveness,
+# _analyze_phonetic_components, _analyze_contextual_relevance,
+# _generate_tips_recommendations, _calculate_tips_quality, 
+# _get_effectiveness_recommendations que estavam definidas duas vezes
 
 
 @router.get("/units/{unit_id}/tips", response_model=SuccessResponse)
@@ -718,7 +727,7 @@ async def get_tips_strategies_info(request: Request):
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS PARA TIPS.PY
 # =============================================================================
 
 def _determine_progression_level(sequence_order: int) -> str:
@@ -759,3 +768,405 @@ def _analyze_tips_content_quality(tips_data: Dict[str, Any]) -> Dict[str, Any]:
         "pronunciation_tips": tips_data.get("pronunciation_tips", []),
         "content_quality_score": (len(examples) + len(practice_suggestions)) / 10  # Exemplo de pontuação
     }
+
+
+def _analyze_vocabulary_integration(tips_data: Dict[str, Any], unit_vocabulary: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analisar integração com vocabulário da unidade."""
+    vocabulary_coverage = tips_data.get("vocabulary_coverage", [])
+    
+    if not unit_vocabulary or not unit_vocabulary.get("items"):
+        return {
+            "coverage_percentage": 0,
+            "words_covered": 0,
+            "total_vocabulary": 0,
+            "integration_score": 0
+        }
+    
+    unit_words = [item.get("word", "").lower() for item in unit_vocabulary.get("items", [])]
+    covered_words = [word.lower() for word in vocabulary_coverage]
+    
+    words_covered = len([word for word in covered_words if word in unit_words])
+    coverage_percentage = (words_covered / len(unit_words)) * 100 if unit_words else 0
+    
+    return {
+        "coverage_percentage": coverage_percentage,
+        "words_covered": words_covered,
+        "total_vocabulary": len(unit_words),
+        "integration_score": coverage_percentage / 100,
+        "uncovered_words": [word for word in unit_words if word not in covered_words][:5]
+    }
+
+
+def _analyze_pedagogical_effectiveness(tips_data: Dict[str, Any], cefr_level: str) -> Dict[str, Any]:
+    """Analisar eficácia pedagógica da estratégia."""
+    strategy = tips_data.get("strategy", "")
+    
+    # Mapear eficácia por estratégia e nível
+    strategy_effectiveness = {
+        "afixacao": {"A1": 0.6, "A2": 0.8, "B1": 0.9, "B2": 0.8, "C1": 0.7, "C2": 0.6},
+        "substantivos_compostos": {"A1": 0.9, "A2": 0.9, "B1": 0.8, "B2": 0.6, "C1": 0.5, "C2": 0.4},
+        "colocacoes": {"A1": 0.3, "A2": 0.5, "B1": 0.8, "B2": 0.9, "C1": 0.9, "C2": 0.8},
+        "expressoes_fixas": {"A1": 0.5, "A2": 0.8, "B1": 0.8, "B2": 0.7, "C1": 0.6, "C2": 0.5},
+        "idiomas": {"A1": 0.2, "A2": 0.3, "B1": 0.5, "B2": 0.8, "C1": 0.9, "C2": 0.9},
+        "chunks": {"A1": 0.9, "A2": 0.9, "B1": 0.8, "B2": 0.7, "C1": 0.6, "C2": 0.5}
+    }
+    
+    effectiveness_score = strategy_effectiveness.get(strategy, {}).get(cefr_level, 0.7)
+    
+    return {
+        "strategy": strategy,
+        "cefr_level": cefr_level,
+        "effectiveness_score": effectiveness_score,
+        "is_appropriate": effectiveness_score >= 0.7,
+        "recommendations": _get_effectiveness_recommendations(strategy, cefr_level, effectiveness_score)
+    }
+
+
+def _analyze_phonetic_components(tips_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Analisar componentes fonéticos das TIPS."""
+    phonetic_focus = tips_data.get("phonetic_focus", [])
+    pronunciation_tips = tips_data.get("pronunciation_tips", [])
+    
+    return {
+        "has_phonetic_focus": len(phonetic_focus) > 0,
+        "phonetic_elements": phonetic_focus,
+        "pronunciation_guidance": len(pronunciation_tips) > 0,
+        "pronunciation_tips_count": len(pronunciation_tips),
+        "phonetic_integration_score": (len(phonetic_focus) + len(pronunciation_tips)) / 10
+    }
+
+
+def _analyze_contextual_relevance(tips_data: Dict[str, Any], unit) -> Dict[str, Any]:
+    """Analisar relevância contextual da estratégia."""
+    strategy = tips_data.get("strategy", "")
+    unit_context = unit.context or ""
+    unit_title = unit.title or ""
+    
+    # Análise de palavras-chave do contexto
+    context_keywords = unit_context.lower().split() + unit_title.lower().split()
+    strategy_explanation = tips_data.get("explanation", "").lower()
+    
+    # Verificar alinhamento com contexto
+    keyword_matches = sum(1 for keyword in context_keywords if keyword in strategy_explanation)
+    context_alignment = keyword_matches / max(len(context_keywords), 1)
+    
+    return {
+        "context_alignment_score": context_alignment,
+        "strategy_fits_context": context_alignment > 0.3,
+        "unit_context": unit_context,
+        "strategy_explanation_length": len(strategy_explanation),
+        "keyword_matches": keyword_matches
+    }
+
+
+def _generate_tips_recommendations(analysis: Dict[str, Any], unit) -> List[str]:
+    """Gerar recomendações para melhorar TIPS."""
+    recommendations = []
+    
+    # Análise de seleção de estratégia
+    strategy_analysis = analysis["strategy_analysis"]
+    if strategy_analysis["is_overused"]:
+        recommendations.append(
+            f"Estratégia '{strategy_analysis['selected_strategy']}' está sendo usada excessivamente "
+            f"({strategy_analysis['usage_frequency']} vezes). Considere diversificar."
+        )
+    
+    # Análise de qualidade de conteúdo
+    content_quality = analysis["content_quality"]
+    if content_quality["examples_count"] < 3:
+        recommendations.append(
+            f"Poucos exemplos ({content_quality['examples_count']}). Recomendado: pelo menos 3-5 exemplos."
+        )
+    
+    if content_quality["practice_suggestions_count"] < 2:
+        recommendations.append(
+            "Adicione mais sugestões de prática para reforçar a estratégia."
+        )
+    
+    # Análise de integração com vocabulário
+    vocab_integration = analysis["vocabulary_integration"]
+    if vocab_integration["coverage_percentage"] < 50:
+        recommendations.append(
+            f"Baixa integração com vocabulário da unidade ({vocab_integration['coverage_percentage']:.1f}%). "
+            f"Considere incluir mais palavras do vocabulário da unidade."
+        )
+    
+    # Análise de eficácia pedagógica
+    pedagogical = analysis["pedagogical_effectiveness"]
+    if not pedagogical["is_appropriate"]:
+        recommendations.append(
+            f"Estratégia pode não ser a mais adequada para nível {pedagogical['cefr_level']} "
+            f"(eficácia: {pedagogical['effectiveness_score']:.1f}). "
+            f"Considere: {', '.join(pedagogical['recommendations'])}"
+        )
+    
+    # Análise fonética
+    phonetic = analysis["phonetic_analysis"]
+    if not phonetic["has_phonetic_focus"]:
+        recommendations.append(
+            "Adicione elementos fonéticos para melhorar a pronúncia."
+        )
+    
+    # Análise contextual
+    contextual = analysis["contextual_relevance"]
+    if not contextual["strategy_fits_context"]:
+        recommendations.append(
+            f"Estratégia tem baixo alinhamento com contexto da unidade "
+            f"(score: {contextual['context_alignment_score']:.1f}). "
+            f"Adapte explicações ao tema da unidade."
+        )
+    
+    # Recomendações específicas por estratégia
+    strategy = analysis["strategy_analysis"]["selected_strategy"]
+    if strategy == "afixacao":
+        recommendations.append("Para afixação: foque em padrões morfológicos recorrentes")
+    elif strategy == "colocacoes":
+        recommendations.append("Para colocações: inclua exercícios de combinação natural")
+    elif strategy == "chunks":
+        recommendations.append("Para chunks: enfatize uso em situações comunicativas")
+    elif strategy == "substantivos_compostos":
+        recommendations.append("Para compostos: agrupe por campos semânticos")
+    elif strategy == "expressoes_fixas":
+        recommendations.append("Para expressões fixas: pratique em contextos funcionais")
+    elif strategy == "idiomas":
+        recommendations.append("Para idiomas: explique o significado cultural")
+    
+    return recommendations
+
+
+def _calculate_tips_quality(analysis: Dict[str, Any]) -> float:
+    """Calcular qualidade geral das TIPS."""
+    try:
+        # Componentes da qualidade
+        strategy_score = 1.0 if not analysis["strategy_analysis"]["is_overused"] else 0.6
+        content_score = min(analysis["content_quality"]["content_quality_score"], 1.0)
+        vocab_score = analysis["vocabulary_integration"]["integration_score"]
+        pedagogical_score = analysis["pedagogical_effectiveness"]["effectiveness_score"]
+        phonetic_score = min(analysis["phonetic_analysis"]["phonetic_integration_score"], 1.0)
+        context_score = analysis["contextual_relevance"]["context_alignment_score"]
+        
+        # Média ponderada
+        weights = {
+            "strategy": 0.2,
+            "content": 0.25,
+            "vocabulary": 0.25,
+            "pedagogical": 0.15,
+            "phonetic": 0.1,
+            "context": 0.05
+        }
+        
+        overall_quality = (
+            strategy_score * weights["strategy"] +
+            content_score * weights["content"] +
+            vocab_score * weights["vocabulary"] +
+            pedagogical_score * weights["pedagogical"] +
+            phonetic_score * weights["phonetic"] +
+            context_score * weights["context"]
+        )
+        
+        return round(overall_quality, 2)
+        
+    except Exception as e:
+        logger.warning(f"Erro ao calcular qualidade das TIPS: {str(e)}")
+        return 0.7  # Score padrão
+
+
+def _get_effectiveness_recommendations(strategy: str, cefr_level: str, effectiveness_score: float) -> List[str]:
+    """Obter recomendações de eficácia por estratégia e nível."""
+    recommendations = []
+    
+    if effectiveness_score < 0.7:
+        if strategy == "afixacao" and cefr_level in ["A1", "A2"]:
+            recommendations.append("Use prefixos/sufixos mais básicos para iniciantes")
+        elif strategy == "colocacoes" and cefr_level in ["A1", "A2"]:
+            recommendations.append("Considere chunks ou expressões fixas para níveis básicos")
+        elif strategy == "idiomas" and cefr_level in ["A1", "A2", "B1"]:
+            recommendations.append("Idiomas são mais adequados para níveis B2+")
+        elif strategy == "substantivos_compostos" and cefr_level in ["B2", "C1", "C2"]:
+            recommendations.append("Para níveis avançados, foque em colocações ou idiomas")
+        elif strategy == "expressoes_fixas" and cefr_level in ["C1", "C2"]:
+            recommendations.append("Para níveis avançados, prefira idiomas ou colocações sofisticadas")
+        elif strategy == "chunks" and cefr_level in ["C1", "C2"]:
+            recommendations.append("Para níveis avançados, foque em chunks acadêmicos e profissionais")
+    
+    # Recomendações gerais de melhoria
+    if effectiveness_score < 0.5:
+        recommendations.append("Considere mudar de estratégia para este nível")
+    elif effectiveness_score < 0.7:
+        recommendations.append("Adapte exemplos e exercícios ao nível do aluno")
+    
+    return recommendations
+
+
+def _get_tips_strategy_info(strategy: str) -> Dict[str, Any]:
+    """Obter informações detalhadas sobre uma estratégia TIPS específica."""
+    strategies_info = {
+        "afixacao": {
+            "name": "TIP 1: Afixação",
+            "description": "Ensino através de prefixos e sufixos",
+            "morphological_patterns": ["un- (unhappy)", "re- (remake)", "-er (teacher)", "-ly (quickly)"],
+            "best_for_levels": ["A2", "B1", "B2"],
+            "phonetic_focus": "Stress shift in derived words",
+            "memory_technique": "Pattern recognition and word families"
+        },
+        "substantivos_compostos": {
+            "name": "TIP 2: Substantivos Compostos", 
+            "description": "Agrupamento temático de palavras compostas",
+            "semantic_fields": ["transport", "technology", "workplace", "home"],
+            "best_for_levels": ["A1", "A2", "B1"],
+            "phonetic_focus": "Primary stress on first element",
+            "memory_technique": "Visual association and semantic grouping"
+        },
+        "colocacoes": {
+            "name": "TIP 3: Colocações",
+            "description": "Combinações naturais e frequentes de palavras",
+            "collocation_types": ["verb+noun", "adjective+noun", "adverb+adjective"],
+            "best_for_levels": ["B1", "B2", "C1"],
+            "phonetic_focus": "Natural rhythm in multi-word units",
+            "memory_technique": "Frequency awareness and natural combinations"
+        },
+        "expressoes_fixas": {
+            "name": "TIP 4: Expressões Fixas",
+            "description": "Fórmulas fixas e frases cristalizadas",
+            "functions": ["politeness", "discourse_markers", "social_formulas"],
+            "best_for_levels": ["A2", "B1", "B2"],
+            "phonetic_focus": "Sentence stress and intonation patterns",
+            "memory_technique": "Situational memorization and drilling"
+        },
+        "idiomas": {
+            "name": "TIP 5: Idiomas",
+            "description": "Expressões com significado figurativo",
+            "categories": ["body_parts", "colors", "animals", "weather"],
+            "best_for_levels": ["B2", "C1", "C2"],
+            "phonetic_focus": "Connected speech and reduced forms",
+            "memory_technique": "Cultural context and image association"
+        },
+        "chunks": {
+            "name": "TIP 6: Chunks",
+            "description": "Blocos funcionais para fluência automática",
+            "chunk_types": ["sentence_starters", "transitions", "functional_phrases"],
+            "best_for_levels": ["A1", "A2", "B1"],
+            "phonetic_focus": "Rhythm and stress in formulaic sequences",
+            "memory_technique": "Repetition and procedural memory"
+        }
+    }
+    
+    return strategies_info.get(strategy, {})
+
+
+def _validate_tips_strategy_selection(
+    vocabulary_items: List[Dict[str, Any]], 
+    cefr_level: str,
+    used_strategies: List[str]
+) -> str:
+    """Validar e sugerir estratégia TIPS mais adequada."""
+    
+    # Analisar padrões no vocabulário
+    has_affixes = any(
+        word.get("word", "").startswith(("un", "re", "pre")) or 
+        word.get("word", "").endswith(("er", "ly", "tion", "ing"))
+        for word in vocabulary_items
+    )
+    
+    has_compounds = any(
+        "-" in word.get("word", "") or 
+        len(word.get("word", "").split()) > 1
+        for word in vocabulary_items
+    )
+    
+    # Contar frequência de estratégias já usadas
+    strategy_counts = {}
+    for strategy in used_strategies:
+        strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
+    
+    # Lógica de seleção baseada no IVO V2 Guide
+    if cefr_level in ["A1", "A2"]:
+        if has_compounds and strategy_counts.get("substantivos_compostos", 0) < 2:
+            return "substantivos_compostos"
+        elif strategy_counts.get("chunks", 0) < 2:
+            return "chunks"
+        else:
+            return "expressoes_fixas"
+    
+    elif cefr_level in ["B1", "B2"]:
+        if has_affixes and strategy_counts.get("afixacao", 0) < 2:
+            return "afixacao"
+        elif strategy_counts.get("colocacoes", 0) < 2:
+            return "colocacoes"
+        else:
+            return "expressoes_fixas"
+    
+    else:  # C1, C2
+        if strategy_counts.get("idiomas", 0) < 2:
+            return "idiomas"
+        else:
+            return "colocacoes"
+
+
+def _generate_strategy_rationale(
+    selected_strategy: str,
+    vocabulary_analysis: Dict[str, Any],
+    unit_context: Dict[str, Any],
+    rag_context: Dict[str, Any]
+) -> str:
+    """Gerar justificativa para seleção da estratégia."""
+    
+    strategy_info = _get_tips_strategy_info(selected_strategy)
+    cefr_level = unit_context.get("cefr_level", "B1")
+    
+    rationale_parts = []
+    
+    # Justificativa baseada no nível CEFR
+    if cefr_level in strategy_info.get("best_for_levels", []):
+        rationale_parts.append(f"Estratégia adequada para nível {cefr_level}")
+    
+    # Justificativa baseada no vocabulário
+    vocab_patterns = vocabulary_analysis.get("patterns", [])
+    if selected_strategy == "afixacao" and "morphological_patterns" in vocab_patterns:
+        rationale_parts.append("Vocabulário apresenta padrões morfológicos claros")
+    elif selected_strategy == "substantivos_compostos" and "compound_words" in vocab_patterns:
+        rationale_parts.append("Presença de palavras compostas permite agrupamento temático")
+    elif selected_strategy == "colocacoes" and "natural_combinations" in vocab_patterns:
+        rationale_parts.append("Vocabulário permite explorar combinações naturais")
+    
+    # Justificativa baseada no balanceamento RAG
+    used_strategies = rag_context.get("used_strategies", [])
+    if used_strategies.count(selected_strategy) <= 1:
+        rationale_parts.append("Estratégia pouco utilizada no book, promove variedade")
+    
+    # Justificativa baseada no contexto
+    unit_context_text = unit_context.get("context", "")
+    if selected_strategy == "chunks" and any(word in unit_context_text.lower() for word in ["communication", "conversation", "speaking"]):
+        rationale_parts.append("Contexto comunicativo favorece uso de chunks funcionais")
+    
+    return ". ".join(rationale_parts) if rationale_parts else f"Estratégia {selected_strategy} selecionada para diversificação pedagógica"
+
+
+def _extract_phonetic_patterns(vocabulary_items: List[Dict[str, Any]]) -> List[str]:
+    """Extrair padrões fonéticos do vocabulário para foco das TIPS."""
+    patterns = []
+    
+    # Analisar stress patterns
+    stress_patterns = []
+    for item in vocabulary_items:
+        phoneme = item.get("phoneme", "")
+        if "ˈ" in phoneme:
+            stress_patterns.append("primary_stress")
+        if "ˌ" in phoneme:
+            stress_patterns.append("secondary_stress")
+    
+    if stress_patterns:
+        patterns.append("word_stress_patterns")
+    
+    # Analisar difficult sounds
+    difficult_sounds = []
+    for item in vocabulary_items:
+        phoneme = item.get("phoneme", "")
+        if any(sound in phoneme for sound in ["θ", "ð", "ʃ", "ʒ", "ŋ"]):
+            difficult_sounds.append("consonant_clusters")
+        if any(sound in phoneme for sound in ["æ", "ʌ", "ɜː", "ɪə", "eə"]):
+            difficult_sounds.append("vowel_distinctions")
+    
+    patterns.extend(list(set(difficult_sounds)))
+    
+    return list(set(patterns))
