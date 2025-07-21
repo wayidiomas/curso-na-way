@@ -1,104 +1,72 @@
-# src/mcp/mcp_image_client.py - CORREÇÃO DO CAMINHO
+# src/mcp/mcp_image_client.py - VERSÃO SIMPLES
 """
 Cliente MCP para integração com o Image Analysis Server
-Implementação do PROMPT 3 do IVO V2 Guide - Lado Cliente
+Implementação simplificada usando o SDK oficial
 """
 
 import asyncio
-import base64
 import json
 import logging
-import subprocess
-import tempfile
-import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from datetime import datetime
 from pathlib import Path
 
-from langchain.tools import BaseTool
-from langchain.pydantic_v1 import BaseModel, Field
-from mcp import ClientSession, StdioServerParameters, create_stdio_client
-from PIL import Image
-import io
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 logger = logging.getLogger(__name__)
 
 
 class MCPImageAnalysisClient:
-    """Cliente para comunicação com o MCP Image Analysis Server."""
+    """Cliente simples para comunicação com o MCP Image Analysis Server."""
     
-    def __init__(self, server_path: Optional[str] = None):
+    def __init__(self, server_path: str = None):
         """
-        Inicializar cliente MCP.
+        Args:
+            server_path: Caminho para o servidor MCP
+        """
+        if server_path is None:
+            project_root = Path(__file__).parent.parent.parent
+            self.server_path = str(project_root / "src" / "mcp" / "image_analysis_server.py")
+        else:
+            self.server_path = server_path
+    
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Chamar uma tool do servidor MCP.
         
         Args:
-            server_path: Caminho para o servidor MCP (opcional)
-        """
-        self.session: Optional[ClientSession] = None
-        self.server_path = server_path or self._get_default_server_path()
-        self.is_connected = False
-        
-    def _get_default_server_path(self) -> str:
-        """Obter caminho padrão do servidor MCP."""
-        # CORREÇÃO: Caminho correto para o servidor
-        project_root = Path(__file__).parent.parent.parent
-        return str(project_root / "src" / "mcp" / "image_analysis_server.py")
-    
-    async def connect(self) -> bool:
-        """
-        Conectar ao servidor MCP.
-        
+            tool_name: Nome da tool
+            arguments: Argumentos para a tool
+            
         Returns:
-            True se conectado com sucesso
+            Resultado da tool parseado como JSON
         """
+        # Configurar parâmetros do servidor
+        server_params = StdioServerParameters(
+            command="python",
+            args=[self.server_path]
+        )
+        
         try:
-            logger.info("🔌 Conectando ao MCP Image Analysis Server...")
-            
-            # Verificar se o arquivo do servidor existe
-            if not os.path.exists(self.server_path):
-                logger.error(f"❌ Servidor MCP não encontrado em: {self.server_path}")
-                return False
-            
-            # Configurar parâmetros do servidor stdio
-            server_params = StdioServerParameters(
-                command="python",
-                args=[self.server_path],
-                env={
-                    **os.environ,
-                    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "")
-                }
-            )
-            
-            # Criar cliente e sessão
-            client = await create_stdio_client(server_params)
-            self.session = client.session
-            
-            # Verificar conexão listando tools disponíveis
-            tools = await self.session.list_tools()
-            
-            self.is_connected = True
-            logger.info(f"✅ Conectado ao MCP Server com {len(tools.tools)} tools disponíveis")
-            
-            # Log das tools disponíveis
-            for tool in tools.tools:
-                logger.info(f"   📱 {tool.name}: {tool.description}")
-            
-            return True
-            
+            # Conectar ao servidor
+            async with stdio_client(server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    
+                    # Chamar tool
+                    result = await session.call_tool(tool_name, arguments)
+                    
+                    # Processar resultado
+                    if result.content and hasattr(result.content[0], 'text'):
+                        response_text = result.content[0].text
+                        return json.loads(response_text)
+                    else:
+                        return {"error": "Empty response from server"}
+                        
         except Exception as e:
-            logger.error(f"❌ Erro ao conectar com MCP Server: {str(e)}")
-            self.is_connected = False
-            return False
-    
-    async def disconnect(self):
-        """Desconectar do servidor MCP."""
-        if self.session:
-            try:
-                await self.session.close()
-                self.is_connected = False
-                logger.info("🔌 Desconectado do MCP Server")
-            except Exception as e:
-                logger.warning(f"Erro ao desconectar: {str(e)}")
+            logger.error(f"Erro ao chamar tool {tool_name}: {str(e)}")
+            return {"error": str(e)}
     
     async def analyze_image(
         self,
@@ -107,48 +75,13 @@ class MCPImageAnalysisClient:
         cefr_level: str = "A2",
         unit_type: str = "lexical_unit"
     ) -> Dict[str, Any]:
-        """
-        Analisar imagem para contexto educacional.
-        
-        Args:
-            image_data: Imagem em base64
-            context: Contexto educacional
-            cefr_level: Nível CEFR
-            unit_type: Tipo de unidade
-            
-        Returns:
-            Resultado da análise
-        """
-        if not self.is_connected:
-            raise RuntimeError("Client not connected to MCP server")
-        
-        try:
-            logger.info("🔍 Analisando imagem com MCP Server...")
-            
-            # Chamar tool analyze_image
-            result = await self.session.call_tool(
-                name="analyze_image",
-                arguments={
-                    "image_data": image_data,
-                    "context": context,
-                    "cefr_level": cefr_level,
-                    "unit_type": unit_type
-                }
-            )
-            
-            # Processar resultado
-            if result.content and len(result.content) > 0:
-                response_text = result.content[0].text
-                response_data = json.loads(response_text)
-                
-                logger.info("✅ Análise de imagem concluída")
-                return response_data
-            else:
-                raise ValueError("Empty response from MCP server")
-                
-        except Exception as e:
-            logger.error(f"❌ Erro na análise de imagem: {str(e)}")
-            raise
+        """Analisar imagem para contexto educacional."""
+        return await self.call_tool("analyze_image", {
+            "image_data": image_data,
+            "context": context,
+            "cefr_level": cefr_level,
+            "unit_type": unit_type
+        })
     
     async def suggest_vocabulary(
         self,
@@ -156,105 +89,37 @@ class MCPImageAnalysisClient:
         target_count: int = 25,
         cefr_level: str = "A2"
     ) -> List[Dict[str, Any]]:
-        """
-        Sugerir vocabulário baseado na imagem.
+        """Sugerir vocabulário baseado na imagem."""
+        result = await self.call_tool("suggest_vocabulary", {
+            "image_data": image_data,
+            "target_count": target_count,
+            "cefr_level": cefr_level
+        })
         
-        Args:
-            image_data: Imagem em base64
-            target_count: Número desejado de palavras
-            cefr_level: Nível CEFR
-            
-        Returns:
-            Lista de vocabulário sugerido
-        """
-        if not self.is_connected:
-            raise RuntimeError("Client not connected to MCP server")
-        
-        try:
-            logger.info(f"📚 Sugerindo {target_count} palavras de vocabulário...")
-            
-            result = await self.session.call_tool(
-                name="suggest_vocabulary",
-                arguments={
-                    "image_data": image_data,
-                    "target_count": target_count,
-                    "cefr_level": cefr_level
-                }
-            )
-            
-            if result.content and len(result.content) > 0:
-                response_text = result.content[0].text
-                response_data = json.loads(response_text)
-                
-                if response_data.get("success"):
-                    vocabulary = response_data.get("vocabulary", [])
-                    logger.info(f"✅ {len(vocabulary)} palavras de vocabulário sugeridas")
-                    return vocabulary
-                else:
-                    error_msg = response_data.get("error", "Unknown error")
-                    raise ValueError(f"MCP server error: {error_msg}")
-            else:
-                raise ValueError("Empty response from MCP server")
-                
-        except Exception as e:
-            logger.error(f"❌ Erro na sugestão de vocabulário: {str(e)}")
-            raise
+        if result.get("success"):
+            return result.get("vocabulary", [])
+        else:
+            logger.warning(f"Erro na sugestão de vocabulário: {result.get('error')}")
+            return []
     
     async def detect_objects(self, image_data: str) -> Dict[str, Any]:
-        """
-        Detectar objetos e cenas na imagem.
+        """Detectar objetos e cenas na imagem."""
+        result = await self.call_tool("detect_objects", {
+            "image_data": image_data
+        })
         
-        Args:
-            image_data: Imagem em base64
-            
-        Returns:
-            Informações de detecção
-        """
-        if not self.is_connected:
-            raise RuntimeError("Client not connected to MCP server")
-        
-        try:
-            logger.info("👁️ Detectando objetos e cenas...")
-            
-            result = await self.session.call_tool(
-                name="detect_objects",
-                arguments={"image_data": image_data}
-            )
-            
-            if result.content and len(result.content) > 0:
-                response_text = result.content[0].text
-                response_data = json.loads(response_text)
-                
-                if response_data.get("success"):
-                    detection = response_data.get("detection", {})
-                    logger.info("✅ Detecção de objetos concluída")
-                    return detection
-                else:
-                    error_msg = response_data.get("error", "Unknown error")
-                    raise ValueError(f"MCP server error: {error_msg}")
-            else:
-                raise ValueError("Empty response from MCP server")
-                
-        except Exception as e:
-            logger.error(f"❌ Erro na detecção de objetos: {str(e)}")
-            raise
+        if result.get("success"):
+            return result.get("detection", {})
+        else:
+            logger.warning(f"Erro na detecção de objetos: {result.get('error')}")
+            return {}
 
 
-# Service class para integração fácil com endpoints V2
 class MCPImageService:
     """Serviço principal para análise de imagens via MCP."""
     
     def __init__(self):
         self.client = MCPImageAnalysisClient()
-    
-    async def __aenter__(self):
-        """Context manager async entry."""
-        await self.client.connect()
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Context manager async exit."""
-        await self.client.disconnect()
     
     async def analyze_uploaded_images_for_unit(
         self,
@@ -264,7 +129,7 @@ class MCPImageService:
         unit_type: str = "lexical_unit"
     ) -> Dict[str, Any]:
         """
-        Analisar múltiplas imagens já convertidas para base64.
+        Analisar múltiplas imagens e consolidar vocabulário.
         
         Args:
             image_files_b64: Lista de imagens em base64
@@ -293,15 +158,21 @@ class MCPImageService:
                 # Sugerir vocabulário específico
                 vocabulary = await self.client.suggest_vocabulary(
                     image_data=image_b64,
-                    target_count=15,  # Menos por imagem para não sobrecarregar
+                    target_count=15,  # Menos por imagem
                     cefr_level=cefr_level
                 )
                 
-                analysis["vocabulary_suggestions"] = vocabulary
-                analysis["image_sequence"] = i + 1
-                
-                analyses.append(analysis)
-                all_vocabulary.extend(vocabulary)
+                # Adicionar vocabulário à análise
+                if analysis.get("success"):
+                    analysis["vocabulary_suggestions"] = vocabulary
+                    analysis["image_sequence"] = i + 1
+                    analyses.append(analysis)
+                    all_vocabulary.extend(vocabulary)
+                else:
+                    analyses.append({
+                        "error": analysis.get("error", "Unknown error"),
+                        "image_sequence": i + 1
+                    })
                 
             except Exception as e:
                 logger.error(f"❌ Erro ao analisar imagem {i+1}: {str(e)}")
@@ -315,10 +186,11 @@ class MCPImageService:
         unique_vocabulary = []
         
         for word_item in all_vocabulary:
-            word = word_item.get("word", "").lower()
-            if word and word not in seen_words:
-                seen_words.add(word)
-                unique_vocabulary.append(word_item)
+            if isinstance(word_item, dict):
+                word = word_item.get("word", "").lower()
+                if word and word not in seen_words:
+                    seen_words.add(word)
+                    unique_vocabulary.append(word_item)
         
         # Ordenar por relevância
         unique_vocabulary.sort(
@@ -352,7 +224,7 @@ class MCPImageService:
         }
 
 
-# Função de conveniência para uso nos endpoints V2
+# Função de conveniência para uso nos endpoints V2 (compatibilidade total)
 async def analyze_images_for_unit_creation(
     image_files_b64: List[str],
     context: str = "",
@@ -361,6 +233,7 @@ async def analyze_images_for_unit_creation(
 ) -> Dict[str, Any]:
     """
     Função específica para análise de imagens durante criação de unidades.
+    MANTÉM A MESMA ASSINATURA da versão anterior para compatibilidade.
     
     Args:
         image_files_b64: Lista de imagens em base64
@@ -372,16 +245,16 @@ async def analyze_images_for_unit_creation(
         Análise pronta para integração com API V2
     """
     try:
-        async with MCPImageService() as service:
-            result = await service.analyze_uploaded_images_for_unit(
-                image_files_b64=image_files_b64,
-                context=context,
-                cefr_level=cefr_level,
-                unit_type=unit_type
-            )
-            
-            return result
-            
+        service = MCPImageService()
+        result = await service.analyze_uploaded_images_for_unit(
+            image_files_b64=image_files_b64,
+            context=context,
+            cefr_level=cefr_level,
+            unit_type=unit_type
+        )
+        
+        return result
+        
     except Exception as e:
         logger.error(f"❌ Erro na análise de imagens para unidade: {str(e)}")
         return {
@@ -389,3 +262,30 @@ async def analyze_images_for_unit_creation(
             "error": str(e),
             "message": "Falha na análise de imagens via MCP"
         }
+
+
+# Exemplo de uso direto
+async def example_usage():
+    """Exemplo de como usar o cliente."""
+    
+    # Exemplo com imagens fake (você usaria imagens reais em base64)
+    fake_images = ["fake_base64_image_1", "fake_base64_image_2"]
+    
+    result = await analyze_images_for_unit_creation(
+        image_files_b64=fake_images,
+        context="Hotel reservation and check-in procedures",
+        cefr_level="A2",
+        unit_type="lexical_unit"
+    )
+    
+    if result.get("success"):
+        vocabulary = result["consolidated_vocabulary"]["vocabulary"]
+        print(f"✅ Encontrou {len(vocabulary)} palavras:")
+        for word_item in vocabulary[:5]:  # Mostrar apenas 5
+            print(f"  - {word_item.get('word')}: {word_item.get('definition')}")
+    else:
+        print(f"❌ Erro: {result.get('error')}")
+
+
+if __name__ == "__main__":
+    asyncio.run(example_usage())
