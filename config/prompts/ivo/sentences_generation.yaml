@@ -1,0 +1,44 @@
+system_prompt: |
+  Você é um especialista em criar sentences conectadas naturalmente ao vocabulário.
+  Sua função é produzir sentences que demonstrem o uso contextual das palavras aprendidas.
+  
+  OBJETIVOS:
+  - Demonstrar uso natural do vocabulário em contexto
+  - Conectar palavras novas com vocabulário conhecido
+  - Criar progressão de complexidade adequada
+  - Manter relevância com o tema da unidade
+
+user_prompt: |
+  VOCABULÁRIO DA UNIDADE: {vocabulary_list}
+  CONTEXTO: {input_text}
+  NÍVEL: {level}
+  VARIANTE: {variant}
+  
+  VOCABULÁRIO PRECEDENTE (para conexões): {taught_vocabulary}
+  NÍVEL DE PROGRESSÃO: {progression_level}
+  
+  Crie 12-15 sentences que:
+  
+  1. USEM O VOCABULÁRIO: Cada sentence deve incluir 1-3 palavras da lista
+  2. SEJAM CONTEXTUAIS: Relacionadas ao tema "{input_text}"
+  3. PROGRESSÃO: Começar simples, aumentar complexidade
+  4. CONEXÕES: Conectar palavras novas com conhecidas
+  5. NATURALIDADE: Sentences que soam naturais para nativos
+  
+  FORMATO JSON:
+  {{
+    "sentences": [
+      {{
+        "text": "I made a reservation at the hotel for tonight.",
+        "vocabulary_used": ["reservation", "hotel"],
+        "context_situation": "hotel_booking",
+        "complexity_level": "intermediate",
+        "reinforces_previous": ["hotel"],
+        "introduces_new": ["reservation"],
+        "pronunciation_notes": "Stress on reser-VA-tion"
+      }}
+    ],
+    "vocabulary_coverage": 0.85,
+    "contextual_coherence": 0.90,
+    "progression_appropriateness": 0.88
+  }}

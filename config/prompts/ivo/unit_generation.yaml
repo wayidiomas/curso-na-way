@@ -1,0 +1,40 @@
+# ============================================================================
+# config/prompts/ivo/unit_generation.yaml
+# ============================================================================
+system_prompt: |
+  Você é um especialista em geração completa de unidades pedagógicas.
+  Coordene todos os componentes para criar uma unidade coerente e eficaz.
+  
+  COMPONENTES DA UNIDADE:
+  1. VOCABULÁRIO (base)
+  2. SENTENCES (conexão)
+  3. ESTRATÉGIAS (TIPS ou GRAMMAR)
+  4. ASSESSMENTS (avaliação)
+  5. Q&A (pedagógico)
+
+user_prompt: |
+  CRIAÇÃO DE UNIDADE COMPLETA:
+  
+  CONTEXTO: {unit_context}
+  IMAGENS: {images_analysis}
+  HIERARQUIA: {hierarchy_context}
+  NÍVEL: {cefr_level}
+  TIPO: {unit_type}
+  
+  GERE uma unidade completa seguindo a sequência:
+  
+  1. ANÁLISE do contexto e imagens
+  2. VOCABULÁRIO (25 palavras) baseado nas imagens
+  3. SENTENCES (12-15) usando o vocabulário
+  4. ESTRATÉGIA (1 TIPS ou 1 GRAMMAR) adequada
+  5. ASSESSMENTS (2 atividades) balanceadas
+  6. Q&A (8-12 perguntas) pedagógicas
+  
+  COORDENAÇÃO:
+  - Vocabulário deve refletir as imagens
+  - Sentences devem usar o vocabulário naturalmente
+  - Estratégia deve ser adequada ao vocabulário/gramática
+  - Assessments devem avaliar objetivos da unidade
+  - Q&A deve integrar todos os componentes
+  
+  RETORNE JSON com todos os componentes estruturados.

@@ -1,0 +1,61 @@
+# ============================================================================
+# config/prompts/ivo/grammar_content.yaml
+# ============================================================================
+system_prompt: |
+  Você é um especialista nas 2 estratégias GRAMMAR para unidades gramaticais.
+  Aplique uma das estratégias baseada no conteúdo e contexto pedagógico.
+  
+  AS 2 ESTRATÉGIAS GRAMMAR:
+  1. EXPLICAÇÃO SISTEMÁTICA: Análise estrutural clara e organizada
+  2. PREVENÇÃO DE ERROS L1: Focar em interferências do português
+
+user_prompt: |
+  TÓPICO GRAMATICAL: {input_text}
+  VOCABULÁRIO: {vocabulary_list}
+  NÍVEL: {level}
+  VARIANTE: {variant}
+  
+  ESTRATÉGIAS JÁ USADAS: {used_strategies}
+  CONTEXTO PEDAGÓGICO: {pedagogical_context}
+  
+  IDENTIFIQUE o ponto gramatical principal e APLIQUE a estratégia mais adequada:
+  
+  PARA EXPLICAÇÃO SISTEMÁTICA:
+  - Estrutura clara da regra
+  - Exemplos organizados
+  - Padrões de uso
+  - Progressão lógica
+  
+  PARA PREVENÇÃO DE ERROS L1:
+  - Identificar interferências do português
+  - Contrastar estruturas PT vs EN
+  - Erros comuns brasileiros
+  - Exercícios preventivos
+  
+  FORMATO JSON:
+  {{
+    "strategy": "explicacao_sistematica",
+    "grammar_point": "Present Perfect vs Simple Past",
+    "systematic_explanation": "The present perfect connects past actions to present...",
+    "usage_rules": [
+      "Use present perfect for experiences",
+      "Use simple past for specific past times"
+    ],
+    "examples": [
+      "I have been to Paris (experience)",
+      "I went to Paris last year (specific time)"
+    ],
+    "l1_interference_notes": [
+      "Portuguese speakers often confuse with pretérito perfeito",
+      "Avoid translating 'eu fui' directly"
+    ],
+    "common_mistakes": [
+      {{
+        "error": "I have been there yesterday",
+        "correction": "I was there yesterday",
+        "explanation": "Use simple past with specific time markers"
+      }}
+    ],
+    "vocabulary_integration": ["been", "experience", "recently"],
+    "selection_rationale": "Systematic explanation works best for this complex tense..."
+  }}

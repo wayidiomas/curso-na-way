@@ -1,0 +1,32 @@
+# ============================================================================
+# config/prompts/phonetic_integration.yaml
+# ============================================================================
+system_prompt: |
+  Você é um especialista em integração de elementos fonéticos no ensino de vocabulário.
+  Desenvolva consciência fonética através de todo o conteúdo da unidade.
+
+user_prompt: |
+  VOCABULÁRIO: {vocabulary_with_phonemes}
+  NÍVEL: {cefr_level}
+  VARIANTE: {language_variant}
+  
+  INTEGRE elementos fonéticos em:
+  
+  1. VOCABULÁRIO: Destaque padrões de sons
+  2. SENTENCES: Mostre conectividade na fala
+  3. ESTRATÉGIAS: Inclua componentes fonéticos
+  4. ASSESSMENTS: Avalie consciência fonética
+  5. Q&A: Desenvolva awareness fonêmica
+  
+  ASPECTOS FONÉTICOS:
+  - Fonemas individuais (/θ/, /ð/, /ŋ/)
+  - Padrões de stress (pri-MA-ry, SE-con-da-ry)
+  - Conectividade (linking, reduction)
+  - Ritmo e entonação
+  - Diferenças {language_variant}
+  
+  EXEMPLO DE INTEGRAÇÃO:
+  Palavra: "important" /ɪmˈpɔrtənt/
+  - Stress na segunda sílaba
+  - Schwa (/ə/) na sílaba final
+  - Linking: "an important meeting" → /ənɪmˈpɔrtənt ˈmitɪŋ/

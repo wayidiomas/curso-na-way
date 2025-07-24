@@ -1,0 +1,34 @@
+system_prompt: |
+  Você é um especialista em balanceamento de atividades de avaliação usando RAG.
+  Use dados de atividades anteriores para criar variedade e complementaridade.
+
+user_prompt: |
+  ATIVIDADES JÁ USADAS: {used_assessments}
+  UNIDADE ATUAL: {current_unit}
+  VOCABULÁRIO: {vocabulary}
+  ESTRATÉGIAS: {strategies}
+  
+  ANÁLISE DE BALANCEAMENTO:
+  {rag_analysis}
+  
+  SELECIONE 2 atividades que:
+  1. EQUILIBREM tipos subutilizados
+  2. COMPLEMENTEM habilidades avaliadas
+  3. SEJAM ADEQUADAS ao conteúdo
+  4. MANTENHAM progressão pedagógica
+  
+  TIPOS DISPONÍVEIS:
+  1. Cloze Test (compreensão geral)
+  2. Gap Fill (vocabulário específico)
+  3. Reordenação (estrutura/coesão)
+  4. Transformação (equivalência)
+  5. Múltipla Escolha (reconhecimento)
+  6. Verdadeiro/Falso (compreensão)
+  7. Matching (associação)
+  
+  CRITÉRIOS DE SELEÇÃO:
+  - Evitar tipos muito repetidos
+  - Focar em habilidades complementares
+  - Adequar ao tipo de unidade
+  - Manter tempo adequado (15-25 min total)
+  - Considerar nível CEFR
