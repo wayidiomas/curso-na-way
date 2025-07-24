@@ -13,35 +13,48 @@ dependencies = [
     # FastAPI Core
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    # LangChain & AI
-    "langchain>=0.1.0",
-    "langchain-community>=0.0.10",
-    "langchain-openai>=0.0.5",
-    "openai>=1.0.0",
-    # Database & Auth
+    
+    # 🚀 LangChain v0.3 - VERSÃO MAIS MODERNA E ESTÁVEL
+    "langchain>=0.3.0",              # Core LangChain v0.3
+    "langchain-core>=0.3.0",         # Core abstractions
+    "langchain-openai>=0.2.0",       # OpenAI integration para v0.3
+    "langchain-community>=0.3.0",    # Community integrations
+    "openai>=1.0.0,<2.0.0",         # OpenAI SDK compatível
+    
+    # Database & Auth  
     "supabase>=2.0.0",
-    "pydantic>=2.5.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic>=2.5.0,<3.0.0",       # 🔥 Pydantic 2 OBRIGATÓRIO para v0.3
+    "pydantic-settings>=2.0.0,<3.0.0",
     "redis>=5.0.0",
+    
     # HTTP & File Handling
-    "python-multipart>=0.0.6",
+    "python-multipart>=0.0.6", 
     "httpx>=0.25.0",
     "aiofiles>=23.0.0",
+    
     # Security
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
+    
     # PDF Generation
     "reportlab>=4.0.0",
     "weasyprint>=60.0",
+    
     # Image Processing
     "pillow>=10.0.0",
     "opencv-python>=4.8.0",
-    # MCP Protocol - INSTALADO
+    
+    # MCP Protocol
     "mcp>=1.0.0",
+    
     # Additional
     "jinja2>=3.1.0",
     "python-dotenv>=1.0.0",
     "transformers>=4.35.0",
+    "pyyaml>=6.0.0",
+    
+    # 🛠️ CLI para migração automática de imports
+    "langchain-cli>=0.0.31",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -61,7 +74,7 @@ dev = [
 dev-dependencies = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "black>=23.0.0",
+    "black>=23.0.0", 
     "ruff>=0.1.0",
     "mypy>=1.6.0",
     "pre-commit>=3.0.0",
