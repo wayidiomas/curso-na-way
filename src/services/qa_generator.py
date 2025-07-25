@@ -2,6 +2,7 @@
 """
 Serviço de geração de perguntas e respostas pedagógicas.
 Implementação baseada na Taxonomia de Bloom com foco em fonética e vocabulário.
+Atualizado para LangChain 0.3 e Pydantic 2.
 """
 
 import asyncio
@@ -12,14 +13,30 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from langchain_openai import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage
-from pydantic import BaseModel, ValidationError
+from langchain_core.messages import SystemMessage, HumanMessage
+from pydantic import BaseModel, ValidationError, Field, ConfigDict
 
 from src.core.unit_models import QASection
 from src.core.enums import CEFRLevel, LanguageVariant, UnitType
 from config.models import get_openai_config, load_model_configs
 
 logger = logging.getLogger(__name__)
+
+
+class QAGenerationRequest(BaseModel):
+    """Modelo de requisição para geração de Q&A - Pydantic 2."""
+    unit_data: Dict[str, Any] = Field(..., description="Dados da unidade")
+    content_data: Dict[str, Any] = Field(..., description="Conteúdo da unidade")
+    hierarchy_context: Dict[str, Any] = Field(default={}, description="Contexto hierárquico")
+    pedagogical_context: Dict[str, Any] = Field(default={}, description="Contexto pedagógico")
+    
+    # Pydantic 2 - Nova sintaxe de configuração
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        arbitrary_types_allowed=True,
+        extra='allow'
+    )
 
 
 class QAGeneratorService:
@@ -30,11 +47,15 @@ class QAGeneratorService:
         self.openai_config = get_openai_config()
         self.model_configs = load_model_configs()
         
-        # Configurar LangChain LLM
+        # Configurar LangChain LLM para v0.3
+        qa_config = self.model_configs.get("content_configs", {}).get("qa_generation", {})
+        
         self.llm = ChatOpenAI(
             model=self.openai_config.openai_model,
-            temperature=0.7,  # Criatividade moderada para perguntas variadas
-            max_tokens=3072,  # Espaço para múltiplas perguntas e respostas
+            temperature=qa_config.get("temperature", 0.7),  # Criatividade moderada
+            max_tokens=qa_config.get("max_tokens", 3072),   # Espaço para múltiplas perguntas
+            timeout=60,
+            max_retries=3,
             api_key=self.openai_config.openai_api_key
         )
         
@@ -43,7 +64,7 @@ class QAGeneratorService:
         self._cache_expiry: Dict[str, float] = {}
         self._max_cache_size = 50
         
-        logger.info("✅ QAGeneratorService inicializado")
+        logger.info("✅ QAGeneratorService inicializado com LangChain 0.3")
     
     async def generate_qa_for_unit(self, qa_params: Dict[str, Any]) -> QASection:
         """
@@ -58,18 +79,13 @@ class QAGeneratorService:
         try:
             start_time = time.time()
             
-            # Extrair parâmetros
-            unit_data = qa_params.get("unit_data", {})
-            content_data = qa_params.get("content_data", {})
-            hierarchy_context = qa_params.get("hierarchy_context", {})
-            pedagogical_context = qa_params.get("pedagogical_context", {})
+            # Validar entrada com Pydantic 2
+            request = QAGenerationRequest(**qa_params)
             
-            logger.info(f"🎓 Gerando Q&A pedagógico para unidade {unit_data.get('title', 'Unknown')}")
+            logger.info(f"🎓 Gerando Q&A pedagógico para unidade {request.unit_data.get('title', 'Unknown')}")
             
             # 1. Construir contexto pedagógico enriquecido
-            enriched_context = await self._build_pedagogical_context(
-                unit_data, content_data, hierarchy_context, pedagogical_context
-            )
+            enriched_context = await self._build_pedagogical_context(request)
             
             # 2. Gerar prompt baseado na Taxonomia de Bloom
             qa_prompt = await self._build_bloom_taxonomy_prompt(enriched_context)
@@ -82,7 +98,7 @@ class QAGeneratorService:
             
             # 5. Enriquecer com componentes fonéticos
             enriched_qa = await self._enrich_with_pronunciation_questions(
-                structured_qa, content_data
+                structured_qa, request.content_data
             )
             
             # 6. Adicionar notas pedagógicas
@@ -108,18 +124,20 @@ class QAGeneratorService:
             
             return qa_section
             
+        except ValidationError as e:
+            logger.error(f"❌ Erro de validação Pydantic 2: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"❌ Erro na geração de Q&A: {str(e)}")
             raise
     
-    async def _build_pedagogical_context(
-        self,
-        unit_data: Dict[str, Any],
-        content_data: Dict[str, Any],
-        hierarchy_context: Dict[str, Any],
-        pedagogical_context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _build_pedagogical_context(self, request: QAGenerationRequest) -> Dict[str, Any]:
         """Construir contexto pedagógico enriquecido."""
+        
+        unit_data = request.unit_data
+        content_data = request.content_data
+        hierarchy_context = request.hierarchy_context
+        pedagogical_context = request.pedagogical_context
         
         # Extrair vocabulário da unidade
         vocabulary_items = []
@@ -171,7 +189,7 @@ class QAGeneratorService:
                 "learning_objectives": learning_objectives,
                 "progression_level": pedagogical_context.get("progression_level", "intermediate"),
                 "phonetic_focus": pedagogical_context.get("phonetic_focus", "general_pronunciation"),
-                "taught_vocabulary": pedagogical_context.get("taught_vocabulary", [])[:10
+                "taught_vocabulary": pedagogical_context.get("taught_vocabulary", [])[:10]
             },
             "bloom_taxonomy_targets": self._determine_bloom_targets(
                 unit_data.get("cefr_level", "A2"),
@@ -302,7 +320,7 @@ Generate the JSON structure now:"""
         ]
     
     async def _generate_qa_llm(self, prompt_messages: List[Any]) -> Dict[str, Any]:
-        """Gerar Q&A usando LLM."""
+        """Gerar Q&A usando LLM com LangChain 0.3."""
         try:
             logger.info("🤖 Consultando LLM para geração de Q&A...")
             
@@ -313,7 +331,7 @@ Generate the JSON structure now:"""
                 logger.info("📦 Usando resultado do cache")
                 return cached_result
             
-            # Gerar usando LangChain
+            # Gerar usando LangChain 0.3 - método ainvoke
             response = await self.llm.ainvoke(prompt_messages)
             content = response.content
             
@@ -792,3 +810,232 @@ def generate_pronunciation_questions(vocabulary_items: List[Dict[str, Any]]) -> 
     return pronunciation_questions[:3]  # Máximo 3 perguntas
 
 
+# =============================================================================
+# ASYNC UTILITY FUNCTIONS - VERSÕES MODERNAS
+# =============================================================================
+
+async def generate_qa_for_unit_async(
+    unit_data: Dict[str, Any],
+    content_data: Dict[str, Any],
+    hierarchy_context: Dict[str, Any] = None,
+    pedagogical_context: Dict[str, Any] = None
+) -> QASection:
+    """
+    Função utilitária moderna para gerar Q&A.
+    
+    Args:
+        unit_data: Dados da unidade
+        content_data: Conteúdo da unidade (vocabulário, sentences, etc.)
+        hierarchy_context: Contexto hierárquico opcional
+        pedagogical_context: Contexto pedagógico opcional
+        
+    Returns:
+        QASection completa
+    """
+    generator = QAGeneratorService()
+    
+    qa_params = {
+        "unit_data": unit_data,
+        "content_data": content_data,
+        "hierarchy_context": hierarchy_context or {},
+        "pedagogical_context": pedagogical_context or {}
+    }
+    
+    return await generator.generate_qa_for_unit(qa_params)
+
+
+async def enhance_existing_qa(
+    existing_qa: QASection,
+    additional_vocabulary: List[Dict[str, Any]] = None,
+    pronunciation_focus: str = None
+) -> QASection:
+    """
+    Enriquecer Q&A existente com novo conteúdo.
+    
+    Args:
+        existing_qa: Q&A section existente
+        additional_vocabulary: Vocabulário adicional
+        pronunciation_focus: Foco específico de pronúncia
+        
+    Returns:
+        QASection enriquecida
+    """
+    # Adicionar perguntas de pronúncia se especificado
+    if pronunciation_focus and additional_vocabulary:
+        additional_pronunciation = generate_pronunciation_questions(additional_vocabulary)
+        
+        enhanced_qa = QASection(
+            questions=existing_qa.questions + [f"Pronunciation focus ({pronunciation_focus}): {q}" for q in additional_pronunciation],
+            answers=existing_qa.answers + [f"Answer focusing on {pronunciation_focus} aspects." for _ in additional_pronunciation],
+            pedagogical_notes=existing_qa.pedagogical_notes + [f"Emphasize {pronunciation_focus} in pronunciation practice."],
+            difficulty_progression=existing_qa.difficulty_progression,
+            vocabulary_integration=existing_qa.vocabulary_integration + [item.get("word", "") for item in additional_vocabulary[:3]],
+            cognitive_levels=existing_qa.cognitive_levels + ["apply"] * len(additional_pronunciation),
+            pronunciation_questions=existing_qa.pronunciation_questions + additional_pronunciation,
+            phonetic_awareness=existing_qa.phonetic_awareness + [f"Focus on {pronunciation_focus} awareness."]
+        )
+        
+        return enhanced_qa
+    
+    return existing_qa
+
+
+def create_qa_quality_report(qa_section: QASection) -> Dict[str, Any]:
+    """
+    Criar relatório de qualidade do Q&A.
+    
+    Args:
+        qa_section: Seção de Q&A para analisar
+        
+    Returns:
+        Dict com métricas de qualidade
+    """
+    # Análise básica
+    total_questions = len(qa_section.questions)
+    total_answers = len(qa_section.answers)
+    pronunciation_ratio = len(qa_section.pronunciation_questions) / max(total_questions, 1)
+    
+    # Análise cognitiva
+    cognitive_analysis = analyze_cognitive_complexity(qa_section.cognitive_levels)
+    
+    # Análise de vocabulário
+    vocabulary_integration_score = len(qa_section.vocabulary_integration) / max(total_questions, 1)
+    
+    # Score geral de qualidade
+    quality_components = {
+        "structure_completeness": min(total_answers / max(total_questions, 1), 1.0),
+        "cognitive_diversity": cognitive_analysis.get("variety_score", 0),
+        "pronunciation_focus": min(pronunciation_ratio * 2, 1.0),  # Ideal: 50% das perguntas
+        "vocabulary_integration": min(vocabulary_integration_score, 1.0),
+        "pedagogical_depth": min(len(qa_section.pedagogical_notes) / max(total_questions, 1), 1.0)
+    }
+    
+    overall_quality = sum(quality_components.values()) / len(quality_components)
+    
+    return {
+        "overall_quality_score": round(overall_quality, 2),
+        "quality_components": quality_components,
+        "statistics": {
+            "total_questions": total_questions,
+            "total_answers": total_answers,
+            "pronunciation_questions": len(qa_section.pronunciation_questions),
+            "pronunciation_ratio": round(pronunciation_ratio, 2),
+            "vocabulary_words_integrated": len(qa_section.vocabulary_integration),
+            "pedagogical_notes": len(qa_section.pedagogical_notes)
+        },
+        "cognitive_analysis": cognitive_analysis,
+        "difficulty_progression": qa_section.difficulty_progression,
+        "recommendations": _generate_qa_improvement_recommendations(quality_components, qa_section)
+    }
+
+
+def _generate_qa_improvement_recommendations(
+    quality_components: Dict[str, float], 
+    qa_section: QASection
+) -> List[str]:
+    """Gerar recomendações de melhoria para Q&A."""
+    
+    recommendations = []
+    
+    if quality_components["structure_completeness"] < 0.9:
+        recommendations.append("Verificar se todas as perguntas têm respostas correspondentes.")
+    
+    if quality_components["cognitive_diversity"] < 0.5:
+        recommendations.append("Aumentar diversidade cognitiva - incluir mais níveis da Taxonomia de Bloom.")
+    
+    if quality_components["pronunciation_focus"] < 0.3:
+        recommendations.append("Adicionar mais perguntas focadas em pronúncia e consciência fonética.")
+    
+    if quality_components["vocabulary_integration"] < 0.6:
+        recommendations.append("Integrar mais vocabulário da unidade nas perguntas e respostas.")
+    
+    if quality_components["pedagogical_depth"] < 0.7:
+        recommendations.append("Expandir notas pedagógicas para orientar melhor o uso das perguntas.")
+    
+    if len(qa_section.questions) < 8:
+        recommendations.append("Considerar adicionar mais perguntas para cobertura completa (ideal: 8-12).")
+    
+    if qa_section.difficulty_progression == "needs_reordering":
+        recommendations.append("Reordenar perguntas para progressão logical de dificuldade.")
+    
+    return recommendations
+
+
+# =============================================================================
+# EXEMPLO DE USO E TESTE
+# =============================================================================
+
+async def test_qa_generator():
+    """Função de teste para o QA Generator."""
+    
+    # Dados de exemplo
+    unit_data = {
+        "title": "Hotel Reservations",
+        "context": "Making hotel reservations and check-in procedures",
+        "cefr_level": "A2",
+        "unit_type": "lexical_unit",
+        "language_variant": "american_english",
+        "main_aim": "Students will be able to make hotel reservations",
+        "subsidiary_aims": ["Use polite language", "Understand hotel procedures"]
+    }
+    
+    content_data = {
+        "vocabulary": {
+            "items": [
+                {"word": "reservation", "phoneme": "/ˌrezərˈveɪʃən/", "definition": "reserva"},
+                {"word": "reception", "phoneme": "/rɪˈsepʃən/", "definition": "recepção"},
+                {"word": "available", "phoneme": "/əˈveɪləbəl/", "definition": "disponível"}
+            ]
+        },
+        "sentences": {
+            "sentences": [
+                {"text": "I'd like to make a reservation for tonight."},
+                {"text": "Is there a room available?"},
+                {"text": "Please check at the reception desk."}
+            ]
+        },
+        "tips": {
+            "strategy": "chunks",
+            "title": "Useful Chunks for Hotel Communication"
+        }
+    }
+    
+    hierarchy_context = {
+        "course_name": "English for Travel",
+        "book_name": "Basic Travel English",
+        "sequence_order": 3,
+        "target_level": "A2"
+    }
+    
+    pedagogical_context = {
+        "learning_objectives": ["Make reservations politely", "Understand hotel vocabulary"],
+        "progression_level": "intermediate",
+        "phonetic_focus": "word_stress",
+        "taught_vocabulary": ["hotel", "room", "night"]
+    }
+    
+    try:
+        # Gerar Q&A
+        qa_section = await generate_qa_for_unit_async(
+            unit_data, content_data, hierarchy_context, pedagogical_context
+        )
+        
+        print("✅ Q&A Gerado com sucesso!")
+        print(f"Perguntas: {len(qa_section.questions)}")
+        print(f"Respostas: {len(qa_section.answers)}")
+        print(f"Perguntas de pronúncia: {len(qa_section.pronunciation_questions)}")
+        
+        # Gerar relatório de qualidade
+        quality_report = create_qa_quality_report(qa_section)
+        print(f"Qualidade geral: {quality_report['overall_quality_score']}")
+        
+        return qa_section
+        
+    except Exception as e:
+        print(f"❌ Erro no teste: {str(e)}")
+        return None
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(test_qa_generator())
