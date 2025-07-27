@@ -47,9 +47,8 @@ from .prompt_generator import PromptGeneratorService
 # =============================================================================
 
 # Vocabulary Utils
-from .vocabulary_generator import (
-    # Funções utilitári#as mantidas do arquivo original
-)
+#from .vocabulary_generator import (
+    # Funções utilitári#as mantidas do arquivo original)
 
 # Sentences Utils  
 from .sentences_generator import (
