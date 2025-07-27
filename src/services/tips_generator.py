@@ -2,6 +2,7 @@
 """
 Serviço de geração de estratégias TIPS para unidades lexicais.
 Implementação das 6 estratégias TIPS do IVO V2 Guide com seleção inteligente RAG.
+CORRIGIDO: Seleção via IA, zero cache, análise contextual completa.
 """
 
 import asyncio
@@ -22,35 +23,52 @@ from config.models import get_openai_config, load_model_configs
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# CONSTANTES TÉCNICAS (MANTIDAS - METODOLOGIA ESTABELECIDA)
+# =============================================================================
+
+TIPS_STRATEGIES = [
+    "afixacao",
+    "substantivos_compostos", 
+    "colocacoes",
+    "expressoes_fixas",
+    "idiomas",
+    "chunks"
+]
+
+TIPS_STRATEGY_NAMES = {
+    "afixacao": "TIP 1: Afixação",
+    "substantivos_compostos": "TIP 2: Substantivos Compostos",
+    "colocacoes": "TIP 3: Colocações", 
+    "expressoes_fixas": "TIP 4: Expressões Fixas",
+    "idiomas": "TIP 5: Idiomas",
+    "chunks": "TIP 6: Chunks"
+}
+
+CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+
+
 class TipsGeneratorService:
-    """Serviço principal para geração de estratégias TIPS com seleção inteligente RAG."""
+    """Serviço principal para geração de estratégias TIPS com seleção inteligente IA."""
     
     def __init__(self):
-        """Inicializar serviço com configurações."""
+        """Inicializar serviço com IA contextual."""
         self.openai_config = get_openai_config()
         self.model_configs = load_model_configs()
         
         # Configurar LangChain LLM
         self.llm = ChatOpenAI(
             model=self.openai_config.openai_model,
-            temperature=0.7,  # Criatividade para estratégias variadas
-            max_tokens=2048,  # Espaço para estratégia completa
+            temperature=0.4,  # Mais baixa para consistência na seleção
+            max_tokens=2048,
             api_key=self.openai_config.openai_api_key
         )
         
-        # Cache simples em memória
-        self._memory_cache: Dict[str, Any] = {}
-        self._cache_expiry: Dict[str, float] = {}
-        self._max_cache_size = 50
-        
-        # Base de conhecimento das 6 estratégias TIPS
-        self.tips_strategies_db = self._load_tips_strategies_database()
-        
-        logger.info("✅ TipsGeneratorService inicializado com 6 estratégias TIPS")
+        logger.info("✅ TipsGeneratorService inicializado com IA contextual e 6 estratégias TIPS")
     
     async def generate_tips_for_unit(self, tips_params: Dict[str, Any]) -> TipsContent:
         """
-        Gerar estratégias TIPS para unidade lexical com seleção inteligente RAG.
+        Gerar estratégias TIPS para unidade lexical com seleção inteligente IA + RAG.
         
         Args:
             tips_params: Parâmetros com contexto da unidade, hierarquia e RAG
@@ -74,25 +92,38 @@ class TipsGeneratorService:
                 unit_data, content_data, hierarchy_context, rag_context
             )
             
-            # 2. Seleção inteligente da estratégia TIPS usando RAG
-            selected_strategy = await self._select_optimal_tips_strategy(enriched_context)
+            # 2. ANÁLISE VIA IA: Seleção inteligente da estratégia TIPS
+            selected_strategy = await self._select_optimal_tips_strategy_ai(enriched_context)
             
-            # 3. Gerar prompt específico para a estratégia selecionada
-            tips_prompt = await self._build_strategy_specific_prompt(selected_strategy, enriched_context)
+            # 3. ANÁLISE VIA IA: Gerar informações contextuais da estratégia
+            strategy_info = await self._analyze_strategy_context_ai(
+                selected_strategy, enriched_context
+            )
             
-            # 4. Gerar conteúdo TIPS via LLM
+            # 4. ANÁLISE VIA IA: Prompt específico para a estratégia
+            tips_prompt = await self._build_strategy_specific_prompt_ai(
+                selected_strategy, strategy_info, enriched_context
+            )
+            
+            # 5. Gerar conteúdo TIPS via LLM
             raw_tips = await self._generate_tips_llm(tips_prompt)
             
-            # 5. Processar e estruturar TIPS
-            structured_tips = await self._process_and_structure_tips(raw_tips, selected_strategy, enriched_context)
+            # 6. ANÁLISE VIA IA: Processar e estruturar TIPS
+            structured_tips = await self._process_and_structure_tips_ai(
+                raw_tips, selected_strategy, enriched_context
+            )
             
-            # 6. Enriquecer com componentes fonéticos
-            enriched_tips = await self._enrich_with_phonetic_components(structured_tips, content_data)
+            # 7. ANÁLISE VIA IA: Enriquecer com componentes fonéticos
+            enriched_tips = await self._enrich_with_phonetic_components_ai(
+                structured_tips, content_data, selected_strategy
+            )
             
-            # 7. Adicionar seleção de estratégias complementares
-            final_tips = await self._add_complementary_strategies(enriched_tips, rag_context)
+            # 8. ANÁLISE VIA IA: Estratégias complementares
+            final_tips = await self._add_complementary_strategies_ai(
+                enriched_tips, rag_context, selected_strategy
+            )
             
-            # 8. Construir TipsContent
+            # 9. Construir TipsContent
             tips_content = TipsContent(
                 strategy=TipStrategy(selected_strategy),
                 title=final_tips["title"],
@@ -110,7 +141,7 @@ class TipsGeneratorService:
             generation_time = time.time() - start_time
             
             logger.info(
-                f"✅ Estratégia TIPS '{selected_strategy}' gerada em {generation_time:.2f}s"
+                f"✅ Estratégia TIPS '{selected_strategy}' gerada via IA em {generation_time:.2f}s"
             )
             
             return tips_content
@@ -126,7 +157,7 @@ class TipsGeneratorService:
         hierarchy_context: Dict[str, Any],
         rag_context: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Construir contexto pedagógico enriquecido para seleção de estratégia."""
+        """Construir contexto pedagógico enriquecido (mantido - é estruturação técnica)."""
         
         # Extrair vocabulário da unidade
         vocabulary_items = []
@@ -139,9 +170,6 @@ class TipsGeneratorService:
         sentences = []
         if content_data.get("sentences") and content_data["sentences"].get("sentences"):
             sentences = [s.get("text", "") for s in content_data["sentences"]["sentences"]]
-        
-        # Analisar padrões no vocabulário para seleção de estratégia
-        vocabulary_analysis = await self._analyze_vocabulary_patterns(vocabulary_items)
         
         enriched_context = {
             "unit_info": {
@@ -156,7 +184,7 @@ class TipsGeneratorService:
             "content_analysis": {
                 "vocabulary_count": len(vocabulary_words),
                 "vocabulary_words": vocabulary_words,
-                "vocabulary_patterns": vocabulary_analysis,
+                "vocabulary_items": vocabulary_items,
                 "sentences_count": len(sentences),
                 "sample_sentences": sentences[:3],
                 "has_assessments": bool(content_data.get("assessments"))
@@ -177,164 +205,162 @@ class TipsGeneratorService:
         
         return enriched_context
     
-    async def _analyze_vocabulary_patterns(self, vocabulary_items: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Analisar padrões no vocabulário para informar seleção de estratégia."""
+    # =============================================================================
+    # ANÁLISES VIA IA (SUBSTITUEM LÓGICA HARD-CODED)
+    # =============================================================================
+
+    async def _select_optimal_tips_strategy_ai(self, enriched_context: Dict[str, Any]) -> str:
+        """Seleção inteligente da estratégia TIPS via análise IA."""
         
-        patterns = {
-            "has_affixes": False,
-            "has_compounds": False,
-            "has_collocations": False,
-            "has_fixed_expressions": False,
-            "has_idiomatic_potential": False,
-            "has_functional_chunks": False,
-            "morphological_complexity": "low",
-            "semantic_coherence": "medium"
-        }
+        system_prompt = """Você é um especialista em metodologia TIPS para ensino de vocabulário.
         
-        words = [item.get("word", "").lower() for item in vocabulary_items]
+        Analise o contexto fornecido e selecione a estratégia TIPS mais apropriada das 6 disponíveis:
         
-        # Detectar afixos (TIP 1)
-        common_prefixes = ["un", "re", "pre", "dis", "mis", "over", "under"]
-        common_suffixes = ["er", "ed", "ing", "ly", "tion", "ness", "ful", "less"]
+        1. afixacao - Prefixos e sufixos para expansão sistemática
+        2. substantivos_compostos - Agrupamento temático por campo semântico  
+        3. colocacoes - Combinações naturais de palavras
+        4. expressoes_fixas - Frases cristalizadas e fórmulas funcionais
+        5. idiomas - Expressões com significado figurativo
+        6. chunks - Blocos funcionais para fluência automática
         
-        for word in words:
-            if any(word.startswith(prefix) for prefix in common_prefixes):
-                patterns["has_affixes"] = True
-            if any(word.endswith(suffix) for suffix in common_suffixes):
-                patterns["has_affixes"] = True
-        
-        # Detectar compostos (TIP 2)
-        compounds_indicators = ["-", "phone", "room", "book", "house", "work", "time"]
-        if any(indicator in word for word in words for indicator in compounds_indicators):
-            patterns["has_compounds"] = True
-        
-        # Detectar potencial para colocações (TIP 3)
-        collocation_words = ["make", "take", "get", "have", "do", "heavy", "strong", "big"]
-        if any(col_word in words for col_word in collocation_words):
-            patterns["has_collocations"] = True
-        
-        # Detectar expressões fixas potenciais (TIP 4)
-        if len(words) > 10 and any(len(word) > 6 for word in words):
-            patterns["has_fixed_expressions"] = True
-        
-        # Detectar idiomas potenciais (TIP 5)
-        idiomatic_indicators = ["under", "over", "break", "catch", "fall", "get", "come", "go"]
-        if any(indicator in words for indicator in idiomatic_indicators):
-            patterns["has_idiomatic_potential"] = True
-        
-        # Detectar chunks funcionais (TIP 6)
-        functional_indicators = ["would", "like", "could", "should", "how", "what", "where"]
-        if any(indicator in words for indicator in functional_indicators):
-            patterns["has_functional_chunks"] = True
-        
-        # Determinar complexidade morfológica
-        avg_word_length = sum(len(word) for word in words) / max(len(words), 1)
-        if avg_word_length > 7:
-            patterns["morphological_complexity"] = "high"
-        elif avg_word_length > 5:
-            patterns["morphological_complexity"] = "medium"
-        
-        return patterns
-    
-    async def _select_optimal_tips_strategy(self, enriched_context: Dict[str, Any]) -> str:
-        """Seleção inteligente da estratégia TIPS baseada em RAG e análise do vocabulário."""
+        Considere: vocabulário específico, nível CEFR, contexto da unidade, estratégias já usadas (RAG)."""
         
         unit_info = enriched_context["unit_info"]
         content_analysis = enriched_context["content_analysis"]
         rag_analysis = enriched_context["rag_analysis"]
         
-        cefr_level = unit_info["cefr_level"]
-        vocabulary_patterns = content_analysis["vocabulary_patterns"]
-        used_strategies = rag_analysis["used_strategies"]
+        human_prompt = f"""Selecione a estratégia TIPS ideal para:
         
-        # Contador de estratégias já usadas
-        strategy_counts = {}
-        for strategy in used_strategies:
-            strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
+        UNIDADE:
+        - Título: {unit_info['title']}
+        - Contexto: {unit_info['context']}
+        - Nível: {unit_info['cefr_level']}
+        - Tipo: {unit_info['unit_type']}
         
-        # Sistema de pontuação para cada estratégia
-        strategy_scores = {
-            "afixacao": 0,
-            "substantivos_compostos": 0,
-            "colocacoes": 0,
-            "expressoes_fixas": 0,
-            "idiomas": 0,
-            "chunks": 0
-        }
+        VOCABULÁRIO ({content_analysis['vocabulary_count']} palavras):
+        {', '.join(content_analysis['vocabulary_words'][:15])}
         
-        # PONTUAÇÃO BASEADA NO VOCABULÁRIO
-        if vocabulary_patterns["has_affixes"]:
-            strategy_scores["afixacao"] += 30
+        HIERARQUIA:
+        - Curso: {enriched_context['hierarchy_info']['course_name']}
+        - Livro: {enriched_context['hierarchy_info']['book_name']}  
+        - Sequência: Unidade {enriched_context['hierarchy_info']['sequence_order']}
         
-        if vocabulary_patterns["has_compounds"]:
-            strategy_scores["substantivos_compostos"] += 35
+        RAG (Balanceamento):
+        - Estratégias já usadas: {', '.join(rag_analysis['used_strategies'])}
+        - Nível de progressão: {rag_analysis['progression_level']}
+        - Densidade de estratégias: {rag_analysis['strategy_density']}
         
-        if vocabulary_patterns["has_collocations"]:
-            strategy_scores["colocacoes"] += 25
+        ANÁLISE REQUERIDA:
+        1. Examine padrões no vocabulário (afixos, compostos, colocações, etc.)
+        2. Considere adequação ao nível {unit_info['cefr_level']}
+        3. Analise balanceamento com estratégias já usadas
+        4. Avalie potencial pedagógico para este contexto específico
         
-        if vocabulary_patterns["has_fixed_expressions"]:
-            strategy_scores["expressoes_fixas"] += 20
+        Retorne APENAS o nome da estratégia escolhida (ex: "afixacao", "chunks", etc.)."""
         
-        if vocabulary_patterns["has_idiomatic_potential"]:
-            strategy_scores["idiomas"] += 15
-        
-        if vocabulary_patterns["has_functional_chunks"]:
-            strategy_scores["chunks"] += 25
-        
-        # PONTUAÇÃO BASEADA NO NÍVEL CEFR
-        cefr_preferences = {
-            "A1": {"chunks": 25, "substantivos_compostos": 20, "expressoes_fixas": 15, "afixacao": 10},
-            "A2": {"substantivos_compostos": 25, "chunks": 20, "expressoes_fixas": 20, "afixacao": 15},
-            "B1": {"afixacao": 25, "colocacoes": 20, "expressoes_fixas": 15, "chunks": 10},
-            "B2": {"colocacoes": 30, "afixacao": 20, "expressoes_fixas": 15, "idiomas": 10},
-            "C1": {"colocacoes": 25, "idiomas": 25, "afixacao": 15, "expressoes_fixas": 10},
-            "C2": {"idiomas": 30, "colocacoes": 25, "afixacao": 15, "expressoes_fixas": 5}
-        }
-        
-        level_preferences = cefr_preferences.get(cefr_level, cefr_preferences["A2"])
-        for strategy, bonus in level_preferences.items():
-            strategy_scores[strategy] += bonus
-        
-        # PENALIZAÇÃO POR OVERUSE (evitar mais de 2 usos da mesma estratégia)
-        for strategy, count in strategy_counts.items():
-            if count >= 2:
-                strategy_scores[strategy] -= 40  # Penalização forte
-            elif count >= 1:
-                strategy_scores[strategy] -= 15  # Penalização moderada
-        
-        # BONIFICAÇÃO PARA VARIEDADE
-        unused_strategies = [s for s in strategy_scores.keys() if strategy_counts.get(s, 0) == 0]
-        for strategy in unused_strategies:
-            strategy_scores[strategy] += 10
-        
-        # Selecionar estratégia com maior pontuação
-        selected_strategy = max(strategy_scores, key=strategy_scores.get)
-        max_score = strategy_scores[selected_strategy]
-        
-        logger.info(f"🎯 Estratégia selecionada: {selected_strategy} (score: {max_score})")
-        logger.debug(f"Scores: {strategy_scores}")
-        
-        return selected_strategy
-    
-    async def _build_strategy_specific_prompt(
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            selected = response.content.strip().lower()
+            
+            # Validar se é estratégia válida
+            if selected in TIPS_STRATEGIES:
+                return selected
+            else:
+                # Tentar encontrar na resposta
+                for strategy in TIPS_STRATEGIES:
+                    if strategy in selected:
+                        return strategy
+                
+                logger.warning(f"IA retornou estratégia inválida: {selected}")
+                return "chunks"  # Fallback seguro
+                
+        except Exception as e:
+            logger.warning(f"Erro na seleção IA: {str(e)}")
+            return await self._fallback_strategy_selection(enriched_context)
+
+    async def _analyze_strategy_context_ai(
         self, 
         selected_strategy: str, 
         enriched_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Análise contextual via IA das informações específicas da estratégia."""
+        
+        system_prompt = f"""Você é um especialista na estratégia TIPS "{TIPS_STRATEGY_NAMES[selected_strategy]}".
+        
+        Analise como aplicar esta estratégia específica ao contexto fornecido, considerando o vocabulário e situação pedagógica."""
+        
+        unit_info = enriched_context["unit_info"]
+        content_analysis = enriched_context["content_analysis"]
+        
+        human_prompt = f"""Analise a aplicação da estratégia "{selected_strategy}" para:
+        
+        CONTEXTO: {unit_info['context']}
+        VOCABULÁRIO: {', '.join(content_analysis['vocabulary_words'][:12])}
+        NÍVEL: {unit_info['cefr_level']}
+        
+        Forneça análise específica em formato JSON:
+        {{
+            "description": "Como esta estratégia funciona neste contexto específico",
+            "implementation_guide": "Como aplicar especificamente a este vocabulário",
+            "cefr_adaptation": "Adaptação específica para {unit_info['cefr_level']} neste contexto",
+            "vocabulary_analysis": "Como o vocabulário se adequa a esta estratégia",
+            "phonetic_aspects": ["aspecto fonético 1", "aspecto fonético 2"],
+            "complementary_strategies": ["estratégia complementar 1", "estratégia complementar 2"]
+        }}"""
+        
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            
+            # Tentar parsear JSON
+            try:
+                if "```json" in response.content:
+                    json_content = response.content.split("```json")[1].split("```")[0].strip()
+                else:
+                    json_content = response.content
+                
+                strategy_info = json.loads(json_content)
+                return strategy_info
+                
+            except json.JSONDecodeError:
+                logger.warning("Erro no parsing JSON da análise de estratégia")
+                return self._minimal_strategy_info_fallback(selected_strategy)
+                
+        except Exception as e:
+            logger.warning(f"Erro na análise de estratégia via IA: {str(e)}")
+            return self._minimal_strategy_info_fallback(selected_strategy)
+
+    async def _build_strategy_specific_prompt_ai(
+        self,
+        selected_strategy: str,
+        strategy_info: Dict[str, Any], 
+        enriched_context: Dict[str, Any]
     ) -> List[Any]:
-        """Construir prompt específico para a estratégia TIPS selecionada."""
+        """Construir prompt específico via IA para a estratégia TIPS."""
         
         unit_info = enriched_context["unit_info"]
         content_analysis = enriched_context["content_analysis"]
         hierarchy_info = enriched_context["hierarchy_info"]
         rag_analysis = enriched_context["rag_analysis"]
         
-        # Obter informações específicas da estratégia
-        strategy_info = self.tips_strategies_db[selected_strategy]
+        # ANÁLISE VIA IA: Personalizar prompt baseado no contexto
+        prompt_customization = await self._customize_prompt_for_context_ai(
+            selected_strategy, strategy_info, enriched_context
+        )
         
         system_prompt = f"""You are an expert English teacher implementing the TIPS methodology for lexical units.
 
-SELECTED STRATEGY: {strategy_info['name']}
-STRATEGY DESCRIPTION: {strategy_info['description']}
+SELECTED STRATEGY: {TIPS_STRATEGY_NAMES[selected_strategy]}
+STRATEGY CONTEXT: {strategy_info.get('description', 'Estratégia de vocabulário')}
 
 UNIT CONTEXT:
 - Title: {unit_info['title']}
@@ -346,11 +372,14 @@ UNIT CONTEXT:
 VOCABULARY TO INTEGRATE ({content_analysis['vocabulary_count']} words):
 {', '.join(content_analysis['vocabulary_words'][:15])}
 
-STRATEGY-SPECIFIC GUIDELINES:
-{strategy_info['implementation_guide']}
+CONTEXTUAL STRATEGY GUIDELINES:
+{strategy_info.get('implementation_guide', 'Apply strategy contextually')}
 
-CEFR {unit_info['cefr_level']} ADAPTATION:
-{strategy_info['cefr_adaptations'].get(unit_info['cefr_level'], 'Standard implementation')}
+CEFR {unit_info['cefr_level']} CONTEXTUAL ADAPTATION:
+{strategy_info.get('cefr_adaptation', f'Standard {selected_strategy} for {unit_info["cefr_level"]}')}
+
+VOCABULARY ANALYSIS FOR THIS STRATEGY:
+{strategy_info.get('vocabulary_analysis', 'Vocabulary suitable for strategy application')}
 
 RAG CONTEXT:
 - Used strategies: {', '.join(rag_analysis['used_strategies'])}
@@ -358,55 +387,59 @@ RAG CONTEXT:
 - Strategy density: {rag_analysis['strategy_density']:.2f}
 
 PHONETIC INTEGRATION:
+- Focus areas: {', '.join(strategy_info.get('phonetic_aspects', ['general pronunciation']))}
 - Include pronunciation guidance specific to {selected_strategy}
-- Focus on {unit_info['language_variant']} pronunciation patterns
-- Address stress patterns and connected speech
+- Address {unit_info['language_variant']} pronunciation patterns
+
+CUSTOMIZATION INSTRUCTIONS:
+{prompt_customization}
 
 GENERATION REQUIREMENTS:
-1. Apply the {strategy_info['name']} strategy specifically
+1. Apply the {TIPS_STRATEGY_NAMES[selected_strategy]} specifically to this context
 2. Create practical examples using unit vocabulary
 3. Provide memory techniques aligned with the strategy
 4. Include practice suggestions that reinforce the strategy
 5. Add pronunciation tips specific to this strategy type
-6. Ensure {unit_info['cefr_level']} level appropriateness
+6. Ensure {unit_info['cefr_level']} level appropriateness for context "{unit_info['context']}"
 
 OUTPUT FORMAT: Return valid JSON with this exact structure:
 {{
-  "title": "TIP X: Strategy Name",
-  "explanation": "Clear explanation of how this strategy works",
+  "title": "{TIPS_STRATEGY_NAMES[selected_strategy]}",
+  "explanation": "Clear explanation of how this strategy works in this specific context",
   "examples": [
     "Example 1 using unit vocabulary",
-    "Example 2 showing the pattern",
+    "Example 2 showing the pattern", 
     "Example 3 demonstrating application"
   ],
   "practice_suggestions": [
-    "Practice activity 1",
-    "Practice activity 2"
+    "Practice activity 1 for this context",
+    "Practice activity 2 specific to vocabulary"
   ],
   "memory_techniques": [
-    "Memory technique 1",
-    "Memory technique 2"
+    "Memory technique 1 for this strategy",
+    "Memory technique 2 adapted to context"
   ],
   "vocabulary_coverage": ["word1", "word2", "word3"],
   "phonetic_focus": ["phonetic_aspect1", "phonetic_aspect2"],
   "pronunciation_tips": [
-    "Pronunciation tip 1",
-    "Pronunciation tip 2"
+    "Pronunciation tip 1 for this strategy",
+    "Pronunciation tip 2 for this context"
   ]
 }}"""
 
-        human_prompt = f"""Apply the {strategy_info['name']} strategy to the vocabulary: {', '.join(content_analysis['vocabulary_words'][:10])}
+        human_prompt = f"""Apply the {TIPS_STRATEGY_NAMES[selected_strategy]} strategy to the vocabulary: {', '.join(content_analysis['vocabulary_words'][:10])}
 
 Context: {unit_info['context']}
 Level: {unit_info['cefr_level']}
 
-{strategy_info['specific_instructions']}
+Specific focus for this strategy:
+{strategy_info.get('implementation_guide', 'Standard application')}
 
-Focus on:
-1. How this strategy helps with the specific vocabulary
-2. Practical application in the unit context
-3. Memory techniques that leverage this strategy
-4. Pronunciation patterns relevant to this strategy type
+Generate contextual TIPS content that:
+1. Demonstrates how this strategy helps with the specific vocabulary
+2. Provides practical application in the unit context "{unit_info['context']}"
+3. Includes memory techniques that leverage this strategy
+4. Addresses pronunciation patterns relevant to this strategy type
 
 Generate the JSON structure now:"""
 
@@ -414,20 +447,337 @@ Generate the JSON structure now:"""
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
         ]
-    
+
+    async def _customize_prompt_for_context_ai(
+        self,
+        selected_strategy: str,
+        strategy_info: Dict[str, Any],
+        enriched_context: Dict[str, Any]
+    ) -> str:
+        """Personalizar prompt via IA baseado no contexto específico."""
+        
+        system_prompt = """Você é um especialista em personalização de prompts educacionais.
+        
+        Gere instruções específicas para customizar o prompt da estratégia TIPS baseado no contexto único."""
+        
+        unit_info = enriched_context["unit_info"]
+        content_analysis = enriched_context["content_analysis"]
+        
+        human_prompt = f"""Gere customizações específicas para:
+        
+        ESTRATÉGIA: {selected_strategy}
+        CONTEXTO DA UNIDADE: {unit_info['context']}
+        VOCABULÁRIO: {', '.join(content_analysis['vocabulary_words'][:8])}
+        NÍVEL: {unit_info['cefr_level']}
+        
+        Retorne instruções específicas para customizar a aplicação desta estratégia:
+        - Como adaptar especificamente para este contexto
+        - Que aspectos enfatizar no vocabulário
+        - Como conectar com a situação comunicativa
+        - Adaptações pedagógicas específicas
+        
+        Seja específico para esta combinação única de estratégia + contexto + vocabulário."""
+        
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            return response.content.strip()
+            
+        except Exception as e:
+            logger.warning(f"Erro na customização do prompt via IA: {str(e)}")
+            return f"Apply {selected_strategy} specifically to {unit_info['context']} context with provided vocabulary"
+
+    async def _process_and_structure_tips_ai(
+        self, 
+        raw_tips: Dict[str, Any], 
+        selected_strategy: str,
+        enriched_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Processar e estruturar dados de TIPS usando análise IA."""
+        
+        system_prompt = """Você é um especialista em estruturação de conteúdo educacional TIPS.
+        
+        Processe e melhore o conteúdo TIPS fornecido, garantindo qualidade pedagógica e adequação contextual."""
+        
+        human_prompt = f"""Processe e melhore este conteúdo TIPS:
+        
+        CONTEÚDO BRUTO: {str(raw_tips)}
+        ESTRATÉGIA: {selected_strategy}
+        CONTEXTO: {enriched_context['unit_info']['context']}
+        VOCABULÁRIO: {', '.join(enriched_context['content_analysis']['vocabulary_words'][:10])}
+        
+        Garanta:
+        1. Explicação clara e contextual
+        2. Mínimo 3 exemplos usando vocabulário da unidade
+        3. Mínimo 2 sugestões de prática específicas
+        4. Mínimo 2 técnicas de memória adequadas
+        5. Cobertura apropriada do vocabulário
+        6. Dicas fonéticas relevantes
+        
+        Retorne em formato JSON estruturado e complete campos faltantes se necessário."""
+        
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            
+            # Tentar parsear resposta estruturada
+            try:
+                if "```json" in response.content:
+                    json_content = response.content.split("```json")[1].split("```")[0].strip()
+                else:
+                    json_content = response.content
+                
+                processed_tips = json.loads(json_content)
+                
+                # Adicionar selection_rationale via IA
+                rationale = await self._generate_selection_rationale_ai(
+                    selected_strategy, enriched_context
+                )
+                processed_tips["selection_rationale"] = rationale
+                
+                return processed_tips
+                
+            except json.JSONDecodeError:
+                logger.warning("Erro no parsing do processamento IA, usando fallback técnico")
+                return self._technical_process_fallback(raw_tips, selected_strategy, enriched_context)
+                
+        except Exception as e:
+            logger.warning(f"Erro no processamento IA: {str(e)}")
+            return self._technical_process_fallback(raw_tips, selected_strategy, enriched_context)
+
+    async def _enrich_with_phonetic_components_ai(
+        self, 
+        structured_tips: Dict[str, Any], 
+        content_data: Dict[str, Any],
+        selected_strategy: str
+    ) -> Dict[str, Any]:
+        """Enriquecer TIPS com componentes fonéticos via análise IA."""
+        
+        system_prompt = f"""Você é um especialista em fonética aplicada à estratégia TIPS "{selected_strategy}".
+        
+        Analise o vocabulário e adicione componentes fonéticos específicos para esta estratégia."""
+        
+        vocabulary_items = content_data.get("vocabulary", {}).get("items", [])[:5]
+        vocab_phonetic = [f"{item.get('word', '')}: {item.get('phoneme', '')}" for item in vocabulary_items]
+        
+        human_prompt = f"""Adicione componentes fonéticos para:
+        
+        ESTRATÉGIA: {selected_strategy}
+        VOCABULÁRIO COM FONEMAS: {'; '.join(vocab_phonetic)}
+        TIPS ATUAL: {str(structured_tips)}
+        
+        Analise e adicione:
+        1. Focos fonéticos específicos para esta estratégia
+        2. Dicas de pronúncia relevantes ao tipo de estratégia
+        3. Padrões fonéticos que apoiam a memorização
+        
+        Para estratégia "{selected_strategy}":
+        - Que aspectos fonéticos são mais relevantes?
+        - Como a pronúncia pode reforçar a estratégia?
+        - Que dicas ajudam na aplicação prática?
+        
+        Retorne campos:
+        - phonetic_focus: [lista de aspectos fonéticos]
+        - pronunciation_tips: [lista de dicas específicas]"""
+        
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            
+            # Extrair informações fonéticas da resposta
+            phonetic_focus = []
+            pronunciation_tips = []
+            
+            lines = response.content.split('\n')
+            current_section = None
+            
+            for line in lines:
+                line = line.strip()
+                if 'phonetic_focus' in line.lower() or 'foco fonético' in line.lower():
+                    current_section = 'phonetic'
+                elif 'pronunciation_tips' in line.lower() or 'dicas' in line.lower():
+                    current_section = 'pronunciation'
+                elif line.startswith(('-', '•', '1.', '2.', '3.')):
+                    content = line.lstrip('-•123456789. ')
+                    if current_section == 'phonetic' and content:
+                        phonetic_focus.append(content)
+                    elif current_section == 'pronunciation' and content:
+                        pronunciation_tips.append(content)
+            
+            # Adicionar aos tips estruturados
+            if phonetic_focus:
+                structured_tips["phonetic_focus"] = phonetic_focus[:3]
+            if pronunciation_tips:
+                structured_tips["pronunciation_tips"] = pronunciation_tips[:3]
+            
+            # Garantir campos mínimos
+            if not structured_tips.get("phonetic_focus"):
+                structured_tips["phonetic_focus"] = [f"Pronunciation patterns for {selected_strategy}"]
+            if not structured_tips.get("pronunciation_tips"):
+                structured_tips["pronunciation_tips"] = [f"Practice clear articulation for {selected_strategy}"]
+            
+            return structured_tips
+            
+        except Exception as e:
+            logger.warning(f"Erro no enriquecimento fonético via IA: {str(e)}")
+            
+            # Fallback técnico
+            fallback_complementary = [s for s in TIPS_STRATEGIES if s != selected_strategy and used_strategies.count(s) < 2]
+            enriched_tips["complementary_strategies"] = fallback_complementary[:3]
+            
+            return enriched_tips
+
+    async def _generate_selection_rationale_ai(
+        self, 
+        selected_strategy: str, 
+        enriched_context: Dict[str, Any]
+    ) -> str:
+        """Gerar justificativa de seleção via IA."""
+        
+        system_prompt = """Você é um especialista em justificação pedagógica de estratégias TIPS.
+        
+        Explique de forma clara e concisa por que esta estratégia foi selecionada para este contexto específico."""
+        
+        unit_info = enriched_context["unit_info"]
+        content_analysis = enriched_context["content_analysis"]
+        rag_analysis = enriched_context["rag_analysis"]
+        
+        human_prompt = f"""Justifique a seleção da estratégia "{selected_strategy}" para:
+        
+        CONTEXTO: {unit_info['context']}
+        VOCABULÁRIO: {', '.join(content_analysis['vocabulary_words'][:8])}
+        NÍVEL: {unit_info['cefr_level']}
+        ESTRATÉGIAS USADAS: {', '.join(rag_analysis['used_strategies'])}
+        
+        Explique:
+        1. Por que esta estratégia é ideal para este vocabulário
+        2. Como se adequa ao nível {unit_info['cefr_level']}
+        3. Como contribui para o balanceamento pedagógico
+        
+        Seja específico e pedagógico. Máximo 2-3 frases."""
+        
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            return response.content.strip()
+            
+        except Exception as e:
+            logger.warning(f"Erro na geração de justificativa via IA: {str(e)}")
+            return f"Estratégia {selected_strategy} selecionada para adequação ao contexto {unit_info['context']} e balanceamento pedagógico"
+
+    # =============================================================================
+    # FALLBACKS TÉCNICOS (APENAS PARA ERROS DE IA)
+    # =============================================================================
+
+    async def _fallback_strategy_selection(self, enriched_context: Dict[str, Any]) -> str:
+        """Seleção de fallback quando IA falha (algoritmo técnico simples)."""
+        
+        unit_info = enriched_context["unit_info"]
+        rag_analysis = enriched_context["rag_analysis"]
+        
+        cefr_level = unit_info["cefr_level"]
+        used_strategies = rag_analysis["used_strategies"]
+        
+        # Estratégias por nível (constante técnica)
+        level_preferences = {
+            "A1": ["chunks", "substantivos_compostos", "expressoes_fixas"],
+            "A2": ["substantivos_compostos", "chunks", "expressoes_fixas"],
+            "B1": ["afixacao", "colocacoes", "expressoes_fixas"],
+            "B2": ["colocacoes", "afixacao", "expressoes_fixas"],
+            "C1": ["colocacoes", "idiomas", "afixacao"],
+            "C2": ["idiomas", "colocacoes", "afixacao"]
+        }
+        
+        preferences = level_preferences.get(cefr_level, level_preferences["A2"])
+        
+        # Selecionar menos usada
+        for strategy in preferences:
+            if used_strategies.count(strategy) < 2:
+                return strategy
+        
+        return "chunks"  # Fallback final
+
+    def _minimal_strategy_info_fallback(self, selected_strategy: str) -> Dict[str, Any]:
+        """Info mínima da estratégia em caso de erro de IA."""
+        
+        return {
+            "description": f"Aplicação da estratégia {TIPS_STRATEGY_NAMES[selected_strategy]}",
+            "implementation_guide": f"Aplicar {selected_strategy} ao vocabulário específico da unidade",
+            "cefr_adaptation": "Adaptação contextual apropriada ao nível",
+            "vocabulary_analysis": "Vocabulário adequado para aplicação da estratégia",
+            "phonetic_aspects": ["pronunciation_focus"],
+            "complementary_strategies": [s for s in TIPS_STRATEGIES if s != selected_strategy][:2]
+        }
+
+    def _technical_process_fallback(
+        self, 
+        raw_tips: Dict[str, Any], 
+        selected_strategy: str,
+        enriched_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Processamento técnico fallback quando IA falha."""
+        
+        # Extrair e validar campos obrigatórios (processamento técnico)
+        title = raw_tips.get("title", TIPS_STRATEGY_NAMES[selected_strategy])
+        explanation = raw_tips.get("explanation", f"Aplicação da estratégia {selected_strategy}")
+        examples = raw_tips.get("examples", [])
+        practice_suggestions = raw_tips.get("practice_suggestions", [])
+        memory_techniques = raw_tips.get("memory_techniques", [])
+        
+        vocabulary_words = enriched_context["content_analysis"]["vocabulary_words"]
+        
+        # Completar campos faltantes com dados mínimos
+        if len(examples) < 3:
+            for i, word in enumerate(vocabulary_words[:3]):
+                if i >= len(examples):
+                    examples.append(f"Use '{word}' to demonstrate {selected_strategy} strategy")
+        
+        if len(practice_suggestions) < 2:
+            practice_suggestions.extend([
+                f"Practice identifying {selected_strategy} patterns",
+                f"Create examples using {selected_strategy} approach"
+            ])
+        
+        if len(memory_techniques) < 2:
+            memory_techniques.extend([
+                f"Group words by {selected_strategy} patterns",
+                f"Use visual associations for {selected_strategy}"
+            ])
+        
+        return {
+            "title": title,
+            "explanation": explanation,
+            "examples": examples[:5],
+            "practice_suggestions": practice_suggestions[:3],
+            "memory_techniques": memory_techniques[:3],
+            "vocabulary_coverage": vocabulary_words[:8],
+            "phonetic_focus": ["pronunciation_awareness"],
+            "pronunciation_tips": ["Practice clear articulation"],
+            "selection_rationale": f"Estratégia {selected_strategy} apropriada para o contexto"
+        }
+
     async def _generate_tips_llm(self, prompt_messages: List[Any]) -> Dict[str, Any]:
-        """Gerar conteúdo TIPS usando LLM."""
+        """Gerar conteúdo TIPS usando LLM (sem cache)."""
         try:
             logger.info("🤖 Consultando LLM para geração de estratégia TIPS...")
             
-            # Verificar cache
-            cache_key = self._generate_cache_key(prompt_messages)
-            cached_result = self._get_from_cache(cache_key)
-            if cached_result:
-                logger.info("📦 Usando resultado do cache")
-                return cached_result
-            
-            # Gerar usando LangChain
+            # Gerar usando LangChain (sem cache)
             response = await self.llm.ainvoke(prompt_messages)
             content = response.content
             
@@ -444,9 +794,6 @@ Generate the JSON structure now:"""
                 if not isinstance(tips_data, dict):
                     raise ValueError("Response não é um objeto")
                 
-                # Salvar no cache
-                self._save_to_cache(cache_key, tips_data)
-                
                 logger.info(f"✅ LLM retornou estratégia TIPS com {len(tips_data.get('examples', []))} exemplos")
                 return tips_data
                 
@@ -456,339 +803,82 @@ Generate the JSON structure now:"""
                 
         except Exception as e:
             logger.error(f"❌ Erro na consulta ao LLM: {str(e)}")
-            # Retornar TIPS de fallback
-            return self._generate_fallback_tips()
-    
-    async def _process_and_structure_tips(
-        self, 
-        raw_tips: Dict[str, Any], 
-        selected_strategy: str,
-        enriched_context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Processar e estruturar dados de TIPS."""
+            return await self._generate_fallback_tips_ai()
+
+    async def _generate_fallback_tips_ai(self) -> Dict[str, Any]:
+        """Gerar TIPS de fallback via IA quando LLM principal falha."""
         
-        # Extrair e validar campos obrigatórios
-        title = raw_tips.get("title", f"TIP: {selected_strategy.title()}")
-        explanation = raw_tips.get("explanation", "Estratégia de aprendizado de vocabulário.")
-        examples = raw_tips.get("examples", [])
-        practice_suggestions = raw_tips.get("practice_suggestions", [])
-        memory_techniques = raw_tips.get("memory_techniques", [])
+        system_prompt = """Você é um professor de inglês gerando estratégia TIPS básica de emergência.
         
-        # Processar campos opcionais
-        vocabulary_coverage = raw_tips.get("vocabulary_coverage", [])
-        phonetic_focus = raw_tips.get("phonetic_focus", [])
-        pronunciation_tips = raw_tips.get("pronunciation_tips", [])
+        Crie conteúdo TIPS simples e útil."""
         
-        # Validar e expandir campos se necessário
-        if len(examples) < 3:
-            # Adicionar exemplos básicos se necessário
-            vocabulary_words = enriched_context["content_analysis"]["vocabulary_words"][:3]
-            for i, word in enumerate(vocabulary_words):
-                if i >= len(examples):
-                    examples.append(f"Use '{word}' in context to demonstrate the strategy.")
+        human_prompt = """Gere estratégia TIPS básica em formato JSON:
         
-        if len(practice_suggestions) < 2:
-            practice_suggestions.extend([
-                "Practice identifying patterns in new vocabulary.",
-                "Create your own examples using this strategy."
-            ])
+        {
+          "title": "TIP: Estratégia de Vocabulário",
+          "explanation": "Explicação clara da estratégia",
+          "examples": ["Exemplo 1", "Exemplo 2", "Exemplo 3"],
+          "practice_suggestions": ["Prática 1", "Prática 2"],
+          "memory_techniques": ["Técnica 1", "Técnica 2"],
+          "vocabulary_coverage": ["word1", "word2"],
+          "phonetic_focus": ["pronunciation"],
+          "pronunciation_tips": ["Dica 1", "Dica 2"]
+        }"""
         
-        if len(memory_techniques) < 2:
-            memory_techniques.extend([
-                "Group words by their common patterns.",
-                "Use visual associations to remember connections."
-            ])
-        
-        # Gerar justificativa de seleção
-        selection_rationale = self._generate_selection_rationale(
-            selected_strategy, enriched_context
-        )
-        
-        return {
-            "title": title,
-            "explanation": explanation,
-            "examples": examples[:5],  # Máximo 5 exemplos
-            "practice_suggestions": practice_suggestions[:3],  # Máximo 3 sugestões
-            "memory_techniques": memory_techniques[:3],  # Máximo 3 técnicas
-            "vocabulary_coverage": vocabulary_coverage,
-            "phonetic_focus": phonetic_focus,
-            "pronunciation_tips": pronunciation_tips,
-            "selection_rationale": selection_rationale
-        }
-    
-    async def _enrich_with_phonetic_components(
-        self, 
-        structured_tips: Dict[str, Any], 
-        content_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Enriquecer TIPS com componentes fonéticos específicos."""
-        
-        phonetic_focus = structured_tips.get("phonetic_focus", [])
-        pronunciation_tips = structured_tips.get("pronunciation_tips", [])
-        
-        # Extrair informações fonéticas do vocabulário
-        vocabulary_items = []
-        if content_data.get("vocabulary") and content_data["vocabulary"].get("items"):
-            vocabulary_items = content_data["vocabulary"]["items"][:5]
-        
-        # Adicionar foco fonético se necessário
-        if len(phonetic_focus) < 2:
-            additional_focus = []
-            
-            # Analisar padrões de stress no vocabulário
-            stress_patterns = []
-            for item in vocabulary_items:
-                phoneme = item.get("phoneme", "")
-                if "ˈ" in phoneme:
-                    stress_patterns.append("primary_stress")
-                if "ˌ" in phoneme:
-                    stress_patterns.append("secondary_stress")
-            
-            if stress_patterns:
-                additional_focus.append("word_stress_patterns")
-            
-            # Analisar sons difíceis
-            difficult_sounds = []
-            for item in vocabulary_items:
-                phoneme = item.get("phoneme", "")
-                if any(sound in phoneme for sound in ["θ", "ð", "ʃ", "ʒ", "ŋ"]):
-                    difficult_sounds.append("consonant_challenges")
-                if any(sound in phoneme for sound in ["æ", "ʌ", "ɜː"]):
-                    difficult_sounds.append("vowel_distinctions")
-            
-            additional_focus.extend(list(set(difficult_sounds)))
-            phonetic_focus.extend(additional_focus[:2])
-        
-        # Adicionar dicas de pronúncia se necessário
-        if len(pronunciation_tips) < 2:
-            additional_tips = [
-                "Pay attention to word stress when learning new vocabulary.",
-                "Practice saying words clearly to improve memory retention."
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
             ]
             
-            # Dicas específicas por estratégia
-            strategy = structured_tips.get("title", "").lower()
-            if "afixacao" in strategy or "affix" in strategy:
-                additional_tips.append("Notice how prefixes and suffixes affect word stress.")
-            elif "compound" in strategy or "compostos" in strategy:
-                additional_tips.append("Primary stress usually falls on the first part of compounds.")
-            elif "collocation" in strategy or "colocacoes" in strategy:
-                additional_tips.append("Practice the rhythm of word combinations in natural speech.")
+            response = await self.llm.ainvoke(messages)
             
-            pronunciation_tips.extend(additional_tips[:2])
-        
-        # Atualizar estrutura
-        structured_tips["phonetic_focus"] = phonetic_focus[:3]
-        structured_tips["pronunciation_tips"] = pronunciation_tips[:3]
-        
-        return structured_tips
-    
-    async def _add_complementary_strategies(
-        self, 
-        enriched_tips: Dict[str, Any], 
-        rag_context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Adicionar estratégias complementares sugeridas."""
-        
-        current_strategy = None
-        title = enriched_tips.get("title", "").lower()
-        
-        # Identificar estratégia atual
-        for strategy_key in self.tips_strategies_db.keys():
-            if strategy_key in title or self.tips_strategies_db[strategy_key]["name"].lower() in title:
-                current_strategy = strategy_key
-                break
-        
-        complementary_strategies = []
-        used_strategies = rag_context.get("used_strategies", [])
-        
-        if current_strategy:
-            # Obter estratégias complementares da base de dados
-            strategy_info = self.tips_strategies_db[current_strategy]
-            suggested_complementary = strategy_info.get("complementary_strategies", [])
+            content = response.content
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
             
-            # Filtrar estratégias não usadas recentemente
-            for comp_strategy in suggested_complementary:
-                if used_strategies.count(comp_strategy) < 2:  # Não usar mais que 2 vezes
-                    complementary_strategies.append(comp_strategy)
-        
-        # Se não há estratégias complementares suficientes, sugerir baseado no que foi menos usado
-        if len(complementary_strategies) < 2:
-            all_strategies = list(self.tips_strategies_db.keys())
-            strategy_counts = {s: used_strategies.count(s) for s in all_strategies}
-            least_used = sorted(strategy_counts.items(), key=lambda x: x[1])
+            tips_data = json.loads(content)
             
-            for strategy, count in least_used:
-                if strategy != current_strategy and strategy not in complementary_strategies:
-                    complementary_strategies.append(strategy)
-                if len(complementary_strategies) >= 3:
-                    break
-        
-        enriched_tips["complementary_strategies"] = complementary_strategies[:3]
-        
-        return enriched_tips
-    
-    # =============================================================================
-    # HELPER METHODS
-    # =============================================================================
-    
-    def _load_tips_strategies_database(self) -> Dict[str, Dict[str, Any]]:
-        """Carregar base de conhecimento das 6 estratégias TIPS."""
+            if isinstance(tips_data, dict):
+                logger.info("✅ Fallback IA gerou TIPS de emergência")
+                return tips_data
+            else:
+                raise ValueError("Fallback IA não retornou dict válido")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Fallback IA também falhou: {str(e)}")
+            return self._minimal_hardcoded_fallback()
+
+    def _minimal_hardcoded_fallback(self) -> Dict[str, Any]:
+        """Fallback hard-coded mínimo apenas para emergências críticas."""
+        logger.warning("⚠️ Usando fallback hard-coded mínimo - apenas para emergências")
         
         return {
-            "afixacao": {
-                "name": "TIP 1: Afixação",
-                "description": "Ensino através de prefixos e sufixos para expansão sistemática",
-                "implementation_guide": "Identify common prefixes and suffixes in the vocabulary. Group words by morphological patterns. Teach the meaning of affixes and how they change word meaning.",
-                "specific_instructions": "Focus on prefix/suffix patterns. Show how adding affixes creates new words and changes meanings. Use word families.",
-                "cefr_adaptations": {
-                    "A1": "Simple prefixes like 'un-' and suffixes like '-er'",
-                    "A2": "Common affixes including '-ing', '-ed', 're-', 'pre-'",
-                    "B1": "Extended range including '-tion', '-ness', 'mis-', 'over-'",
-                    "B2": "Complex affixes and multiple affixation patterns",
-                    "C1": "Advanced morphological awareness and Latin/Greek roots",
-                    "C2": "Sophisticated derivational patterns and etymology"
-                },
-                "complementary_strategies": ["substantivos_compostos", "colocacoes"],
-                "phonetic_aspects": ["stress_shift", "pronunciation_changes"]
-            },
-            "substantivos_compostos": {
-                "name": "TIP 2: Substantivos Compostos",
-                "description": "Agrupamento temático de palavras compostas por campo semântico",
-                "implementation_guide": "Group compound words by theme or semantic field. Show relationships between simple words and compounds. Focus on meaning construction.",
-                "specific_instructions": "Identify compound words and word families. Group by themes like 'workplace', 'technology', 'home'. Show how meaning is built from parts.",
-                "cefr_adaptations": {
-                    "A1": "Simple, transparent compounds like 'classroom', 'homework'",
-                    "A2": "Common compound patterns in daily life contexts",
-                    "B1": "Extended compound families and less transparent meanings",
-                    "B2": "Complex compounds and metaphorical uses",
-                    "C1": "Sophisticated compound structures and technical terms",
-                    "C2": "Advanced compound patterns and creative usage"
-                },
-                "complementary_strategies": ["chunks", "afixacao"],
-                "phonetic_aspects": ["compound_stress", "linking_sounds"]
-            },
-            "colocacoes": {
-                "name": "TIP 3: Colocações",
-                "description": "Combinações naturais de palavras que soam nativas",
-                "implementation_guide": "Teach words that naturally go together. Focus on verb+noun, adjective+noun combinations. Emphasize natural vs unnatural combinations.",
-                "specific_instructions": "Identify natural word partnerships. Show strong vs weak collocations. Practice with substitution exercises.",
-                "cefr_adaptations": {
-                    "A1": "Basic verb+noun collocations like 'have breakfast'",
-                    "A2": "Extended common collocations in daily contexts",
-                    "B1": "Academic and workplace collocations",
-                    "B2": "Sophisticated collocational awareness",
-                    "C1": "Advanced collocational patterns and restrictions",
-                    "C2": "Native-like collocational competence"
-                },
-                "complementary_strategies": ["chunks", "expressoes_fixas"],
-                "phonetic_aspects": ["collocation_rhythm", "stress_patterns"]
-            },
-            "expressoes_fixas": {
-                "name": "TIP 4: Expressões Fixas",
-                "description": "Frases cristalizadas e fórmulas funcionais fixas",
-                "implementation_guide": "Teach fixed phrases as complete units. Focus on communicative functions. Show situations where these expressions are used.",
-                "specific_instructions": "Present expressions as whole units. Practice in communicative contexts. Focus on functional language.",
-                "cefr_adaptations": {
-                    "A1": "Basic greetings and polite formulas",
-                    "A2": "Common situational expressions",
-                    "B1": "Extended functional language for various contexts",
-                    "B2": "Sophisticated fixed expressions and discourse markers",
-                    "C1": "Advanced formulaic language and register awareness",
-                    "C2": "Native-like command of fixed expressions"
-                },
-                "complementary_strategies": ["chunks", "colocacoes"],
-                "phonetic_aspects": ["phrase_stress", "intonation_patterns"]
-            },
-            "idiomas": {
-                "name": "TIP 5: Idiomas",
-                "description": "Expressões com significado figurativo e cultural",
-                "implementation_guide": "Teach idiomatic meaning alongside literal meaning. Provide cultural context. Use visual aids and stories to aid memory.",
-                "specific_instructions": "Explain both literal and figurative meanings. Provide cultural background. Use memorable contexts and stories.",
-                "cefr_adaptations": {
-                    "A1": "Not typically appropriate for this level",
-                    "A2": "Very basic, transparent idioms",
-                    "B1": "Common idioms with clear imagery",
-                    "B2": "Extended range of common idioms",
-                    "C1": "Sophisticated idiomatic awareness",
-                    "C2": "Native-like idiomatic competence and cultural awareness"
-                },
-                "complementary_strategies": ["expressoes_fixas", "colocacoes"],
-                "phonetic_aspects": ["idiomatic_stress", "connected_speech"]
-            },
-            "chunks": {
-                "name": "TIP 6: Chunks",
-                "description": "Blocos funcionais para fluência automática",
-                "implementation_guide": "Teach functional language blocks as complete units. Focus on communicative purposes. Practice for automatic retrieval.",
-                "specific_instructions": "Present chunks as ready-made units. Practice until automatic. Focus on communicative functions like agreeing, disagreeing, asking for help.",
-                "cefr_adaptations": {
-                    "A1": "Basic functional chunks for survival communication",
-                    "A2": "Extended chunks for daily communication needs",
-                    "B1": "Chunks for more complex communicative functions",
-                    "B2": "Sophisticated chunks for nuanced communication",
-                    "C1": "Advanced chunks for academic and professional contexts",
-                    "C2": "Native-like chunking and processing"
-                },
-                "complementary_strategies": ["expressoes_fixas", "substantivos_compostos"],
-                "phonetic_aspects": ["chunk_rhythm", "fluency_patterns"]
-            }
+            "title": "TIP: Estratégia Contextual",
+            "explanation": "Esta estratégia foca em aprender vocabulário através do contexto específico da unidade.",
+            "examples": [
+                "Use as palavras novas em frases contextualizadas",
+                "Conecte vocabulário novo com palavras conhecidas", 
+                "Pratique em situações comunicativas reais"
+            ],
+            "practice_suggestions": [
+                "Crie frases próprias com cada palavra nova",
+                "Pratique conversações usando o vocabulário"
+            ],
+            "memory_techniques": [
+                "Use associações visuais com as palavras",
+                "Agrupe palavras por temas ou situações"
+            ],
+            "vocabulary_coverage": ["vocabulary", "context", "practice"],
+            "phonetic_focus": ["clear_articulation"],
+            "pronunciation_tips": [
+                "Preste atenção à pronúncia clara",
+                "Pratique repetição para melhorar memória"
+            ]
         }
-    
-    def _generate_selection_rationale(
-        self, 
-        selected_strategy: str, 
-        enriched_context: Dict[str, Any]
-    ) -> str:
-        """Gerar justificativa para seleção da estratégia."""
-        
-        unit_info = enriched_context["unit_info"]
-        content_analysis = enriched_context["content_analysis"]
-        rag_analysis = enriched_context["rag_analysis"]
-        
-        vocabulary_patterns = content_analysis["vocabulary_patterns"]
-        used_strategies = rag_analysis["used_strategies"]
-        cefr_level = unit_info["cefr_level"]
-        
-        rationale_parts = []
-        
-        # Justificativa baseada no vocabulário
-        if selected_strategy == "afixacao" and vocabulary_patterns["has_affixes"]:
-            rationale_parts.append("O vocabulário apresenta padrões morfológicos claros com prefixos e sufixos")
-        elif selected_strategy == "substantivos_compostos" and vocabulary_patterns["has_compounds"]:
-            rationale_parts.append("Presença de palavras compostas permite agrupamento temático eficiente")
-        elif selected_strategy == "colocacoes" and vocabulary_patterns["has_collocations"]:
-            rationale_parts.append("Vocabulário contém palavras que formam colocações naturais importantes")
-        elif selected_strategy == "expressoes_fixas" and vocabulary_patterns["has_fixed_expressions"]:
-            rationale_parts.append("Contexto favorece o ensino de expressões funcionais fixas")
-        elif selected_strategy == "idiomas" and vocabulary_patterns["has_idiomatic_potential"]:
-            rationale_parts.append("Vocabulário permite explorar significados idiomáticos relevantes")
-        elif selected_strategy == "chunks" and vocabulary_patterns["has_functional_chunks"]:
-            rationale_parts.append("Contexto comunicativo favorece o uso de blocos funcionais")
-        
-        # Justificativa baseada no nível CEFR
-        strategy_info = self.tips_strategies_db[selected_strategy]
-        cefr_adaptations = strategy_info["cefr_adaptations"]
-        if cefr_level in cefr_adaptations and "not typically appropriate" not in cefr_adaptations[cefr_level].lower():
-            rationale_parts.append(f"Estratégia apropriada para nível {cefr_level}")
-        
-        # Justificativa baseada no balanceamento RAG
-        strategy_count = used_strategies.count(selected_strategy)
-        if strategy_count == 0:
-            rationale_parts.append("Estratégia não utilizada ainda no book, promovendo variedade pedagógica")
-        elif strategy_count == 1:
-            rationale_parts.append("Estratégia usada moderadamente, mantendo balanceamento adequado")
-        
-        # Justificativa baseada na progressão
-        sequence_order = enriched_context["hierarchy_info"]["sequence_order"]
-        if sequence_order <= 3 and selected_strategy in ["chunks", "substantivos_compostos"]:
-            rationale_parts.append("Estratégia adequada para unidades iniciais do book")
-        elif sequence_order > 5 and selected_strategy in ["colocacoes", "idiomas"]:
-            rationale_parts.append("Estratégia adequada para unidades mais avançadas do book")
-        
-        return ". ".join(rationale_parts) if rationale_parts else f"Estratégia {selected_strategy} selecionada para diversificação metodológica"
-    
+
     def _extract_tips_from_text(self, text: str) -> Dict[str, Any]:
-        """Extrair TIPS de texto quando JSON parsing falha."""
+        """Extrair TIPS de texto quando JSON parsing falha (parser técnico)."""
         
         tips_data = {
             "title": "",
@@ -810,7 +900,7 @@ Generate the JSON structure now:"""
             if not line:
                 continue
             
-            # Detectar seções
+            # Detectar seções (parser técnico)
             if any(keyword in line.lower() for keyword in ['title', 'tip']):
                 tips_data["title"] = line.split(':', 1)[-1].strip() if ':' in line else line
             elif 'explanation' in line.lower():
@@ -854,7 +944,7 @@ Generate the JSON structure now:"""
         if current_section and current_list:
             tips_data[current_section].extend(current_list)
         
-        # Preencher campos faltantes
+        # Preencher campos faltantes (dados técnicos mínimos)
         if not tips_data["title"]:
             tips_data["title"] = "TIP: Estratégia de Vocabulário"
         
@@ -862,170 +952,179 @@ Generate the JSON structure now:"""
             tips_data["explanation"] = "Esta estratégia ajuda na memorização e uso eficaz do vocabulário."
         
         if not tips_data["examples"]:
-            tips_data["examples"] = ["Exemplo prático da estratégia com vocabulário da unidade."]
+            tips_data["examples"] = ["Exemplo prático da estratégia"]
         
         if not tips_data["practice_suggestions"]:
-            tips_data["practice_suggestions"] = ["Pratique identificando padrões no vocabulário novo."]
+            tips_data["practice_suggestions"] = ["Pratique identificando padrões"]
         
         return tips_data
-    
-    def _generate_fallback_tips(self) -> Dict[str, Any]:
-        """Gerar TIPS de fallback em caso de erro."""
-        
-        fallback_tips = {
-            "title": "TIP: Estratégia de Vocabulário Contextual",
-            "explanation": "Esta estratégia foca em aprender vocabulário através do contexto e uso prático em situações reais de comunicação.",
-            "examples": [
-                "Use as palavras novas em frases completas e contextualizadas.",
-                "Conecte o vocabulário novo com palavras que você já conhece.",
-                "Pratique usar as palavras em diferentes situações comunicativas."
-            ],
-            "practice_suggestions": [
-                "Crie frases próprias usando cada palavra nova pelo menos 3 vezes.",
-                "Pratique conversas usando o vocabulário em contextos reais.",
-                "Faça associações visuais ou mentais com as palavras novas."
-            ],
-            "memory_techniques": [
-                "Use associação de imagens para conectar palavras ao significado.",
-                "Agrupe palavras por temas ou situações de uso.",
-                "Repita as palavras em voz alta prestando atenção à pronúncia."
-            ],
-            "vocabulary_coverage": ["vocabulary", "context", "practice", "memory"],
-            "phonetic_focus": ["word_stress", "clear_articulation"],
-            "pronunciation_tips": [
-                "Preste atenção aos padrões de stress das palavras novas.",
-                "Pratique a pronúncia clara para melhorar a memória."
+
+    # =============================================================================
+    # UTILITY METHODS (MANTIDOS - INTERFACES TÉCNICAS)
+    # =============================================================================
+
+    async def get_service_status(self) -> Dict[str, Any]:
+        """Status do serviço (utilitário técnico)."""
+        return {
+            "service": "TipsGeneratorService",
+            "status": "active",
+            "strategies": TIPS_STRATEGIES,
+            "strategy_names": TIPS_STRATEGY_NAMES,
+            "ai_integration": "100% contextual analysis",
+            "cache_system": "disabled_as_requested",
+            "storage": "supabase_integration",
+            "ai_methods": [
+                "_select_optimal_tips_strategy_ai",
+                "_analyze_strategy_context_ai",
+                "_build_strategy_specific_prompt_ai",
+                "_customize_prompt_for_context_ai",
+                "_process_and_structure_tips_ai",
+                "_enrich_with_phonetic_components_ai",
+                "_add_complementary_strategies_ai",
+                "_generate_selection_rationale_ai"
             ]
         }
+
+    async def validate_tips_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validar parâmetros de geração de TIPS."""
+        validation_result = {
+            "valid": True,
+            "errors": [],
+            "warnings": []
+        }
         
-        logger.warning("⚠️ Usando TIPS de fallback")
-        return fallback_tips
-    
-    def _generate_cache_key(self, prompt_messages: List[Any]) -> str:
-        """Gerar chave para cache baseada no prompt."""
-        content = "".join([msg.content for msg in prompt_messages])
-        return f"tips_{hash(content)}"
-    
-    def _get_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
-        """Obter item do cache em memória."""
-        current_time = time.time()
+        # Validações básicas
+        required_fields = ["unit_data", "content_data", "hierarchy_context", "rag_context"]
+        for field in required_fields:
+            if field not in params:
+                validation_result["errors"].append(f"Campo obrigatório ausente: {field}")
+                validation_result["valid"] = False
         
-        # Verificar se existe e não expirou (2 horas = 7200s)
-        if (key in self._memory_cache and 
-            key in self._cache_expiry and 
-            current_time - self._cache_expiry[key] < 7200):
-            return self._memory_cache[key]
+        # Validações específicas
+        unit_data = params.get("unit_data", {})
+        if not unit_data.get("context"):
+            validation_result["warnings"].append("Contexto da unidade vazio - pode afetar seleção")
         
-        # Remover se expirado
-        if key in self._memory_cache:
-            del self._memory_cache[key]
-        if key in self._cache_expiry:
-            del self._cache_expiry[key]
+        content_data = params.get("content_data", {})
+        if not content_data.get("vocabulary", {}).get("items"):
+            validation_result["warnings"].append("Vocabulário não disponível")
         
-        return None
-    
-    def _save_to_cache(self, key: str, value: Dict[str, Any]) -> None:
-        """Salvar item no cache em memória."""
-        # Limpar cache se muito grande
-        if len(self._memory_cache) >= self._max_cache_size:
-            # Remover item mais antigo
-            oldest_key = min(self._cache_expiry.keys(), key=self._cache_expiry.get)
-            del self._memory_cache[oldest_key]
-            del self._cache_expiry[oldest_key]
-        
-        self._memory_cache[key] = value
-        self._cache_expiry[key] = time.time()
+        return validation_result
 
 
 # =============================================================================
-# UTILITY FUNCTIONS
+# UTILITY FUNCTIONS REFINADAS (IA + CONSTANTES TÉCNICAS)
 # =============================================================================
 
-def validate_tips_strategy_selection(
+async def validate_tips_strategy_selection_ai(
     vocabulary_items: List[Dict[str, Any]], 
     cefr_level: str,
-    used_strategies: List[str]
+    used_strategies: List[str],
+    unit_context: str
 ) -> str:
-    """Validar e sugerir estratégia TIPS mais adequada."""
+    """Validar e sugerir estratégia TIPS via IA."""
     
-    # Analisar padrões no vocabulário
-    has_affixes = any(
-        word.get("word", "").startswith(("un", "re", "pre")) or 
-        word.get("word", "").endswith(("er", "ly", "tion", "ing"))
-        for word in vocabulary_items
-    )
+    # Usar serviço principal para análise IA
+    tips_service = TipsGeneratorService()
     
-    has_compounds = any(
-        "-" in word.get("word", "") or 
-        any(comp in word.get("word", "") for comp in ["phone", "room", "book", "work"])
-        for word in vocabulary_items
-    )
-    
-    has_functional_words = any(
-        word.get("word", "").lower() in ["would", "could", "should", "like", "want", "need"]
-        for word in vocabulary_items
-    )
-    
-    # Contar frequência de estratégias já usadas
-    strategy_counts = {}
-    for strategy in used_strategies:
-        strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
-    
-    # Lógica de seleção baseada no IVO V2 Guide
-    if cefr_level in ["A1", "A2"]:
-        if has_compounds and strategy_counts.get("substantivos_compostos", 0) < 2:
-            return "substantivos_compostos"
-        elif has_functional_words and strategy_counts.get("chunks", 0) < 2:
-            return "chunks"
-        elif strategy_counts.get("expressoes_fixas", 0) < 2:
-            return "expressoes_fixas"
-        else:
-            return "chunks"
-    
-    elif cefr_level in ["B1", "B2"]:
-        if has_affixes and strategy_counts.get("afixacao", 0) < 2:
-            return "afixacao"
-        elif strategy_counts.get("colocacoes", 0) < 2:
-            return "colocacoes"
-        elif strategy_counts.get("expressoes_fixas", 0) < 2:
-            return "expressoes_fixas"
-        else:
-            return "afixacao"
-    
-    else:  # C1, C2
-        if strategy_counts.get("idiomas", 0) < 2:
-            return "idiomas"
-        elif strategy_counts.get("colocacoes", 0) < 2:
-            return "colocacoes"
-        else:
-            return "afixacao"
-
-
-def analyze_tips_effectiveness(
-    tips_content: TipsContent,
-    vocabulary_items: List[Dict[str, Any]],
-    cefr_level: str
-) -> Dict[str, Any]:
-    """Analisar eficácia da estratégia TIPS aplicada."""
-    
-    effectiveness_metrics = {
-        "vocabulary_integration": 0.0,
-        "cefr_appropriateness": 0.0,
-        "strategy_coherence": 0.0,
-        "phonetic_awareness": 0.0,
-        "overall_score": 0.0
+    enriched_context = {
+        "unit_info": {"cefr_level": cefr_level, "context": unit_context},
+        "content_analysis": {"vocabulary_words": [item.get("word", "") for item in vocabulary_items]},
+        "rag_analysis": {"used_strategies": used_strategies}
     }
     
-    # Analisar integração com vocabulário
+    try:
+        selected_strategy = await tips_service._select_optimal_tips_strategy_ai(enriched_context)
+        return selected_strategy
+    except Exception as e:
+        logger.warning(f"Erro na validação IA: {str(e)}")
+        return await tips_service._fallback_strategy_selection(enriched_context)
+
+
+async def analyze_tips_effectiveness_ai(
+    tips_content: TipsContent,
+    vocabulary_items: List[Dict[str, Any]],
+    cefr_level: str,
+    unit_context: str
+) -> Dict[str, Any]:
+    """Analisar eficácia da estratégia TIPS via IA."""
+    
+    tips_service = TipsGeneratorService()
+    
+    system_prompt = """Você é um especialista em avaliação de eficácia pedagógica de estratégias TIPS.
+    
+    Analise a qualidade e eficácia da estratégia aplicada considerando o contexto específico."""
+    
+    human_prompt = f"""Avalie a eficácia desta estratégia TIPS:
+    
+    ESTRATÉGIA: {tips_content.strategy.value}
+    EXPLICAÇÃO: {tips_content.explanation[:200]}...
+    EXEMPLOS: {len(tips_content.examples)} exemplos
+    VOCABULÁRIO: {', '.join([item.get('word', '') for item in vocabulary_items[:8]])}
+    NÍVEL: {cefr_level}
+    CONTEXTO: {unit_context}
+    
+    Avalie (0.0 a 1.0):
+    1. Integração com vocabulário
+    2. Adequação ao nível CEFR
+    3. Coerência da estratégia
+    4. Consciência fonética
+    
+    Retorne scores em formato JSON:
+    {{
+        "vocabulary_integration": 0.8,
+        "cefr_appropriateness": 0.9,
+        "strategy_coherence": 0.7,
+        "phonetic_awareness": 0.6,
+        "overall_score": 0.75
+    }}"""
+    
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
+        ]
+        
+        response = await tips_service.llm.ainvoke(messages)
+        
+        # Tentar parsear JSON
+        try:
+            if "```json" in response.content:
+                json_content = response.content.split("```json")[1].split("```")[0].strip()
+            else:
+                json_content = response.content
+                
+            effectiveness_metrics = json.loads(json_content)
+            return effectiveness_metrics
+            
+        except json.JSONDecodeError:
+            logger.warning("Erro no parsing da análise de eficácia")
+            return _technical_effectiveness_fallback(tips_content, vocabulary_items, cefr_level)
+            
+    except Exception as e:
+        logger.warning(f"Erro na análise de eficácia via IA: {str(e)}")
+        return _technical_effectiveness_fallback(tips_content, vocabulary_items, cefr_level)
+
+
+def _technical_effectiveness_fallback(
+    tips_content: TipsContent,
+    vocabulary_items: List[Dict[str, Any]], 
+    cefr_level: str
+) -> Dict[str, Any]:
+    """Análise técnica de eficácia quando IA falha."""
+    
+    # Análise técnica básica
     vocabulary_words = {item.get("word", "").lower() for item in vocabulary_items}
     coverage_words = {word.lower() for word in tips_content.vocabulary_coverage}
     
+    # Integração com vocabulário (cálculo técnico)
     if vocabulary_words:
         integration_score = len(coverage_words & vocabulary_words) / len(vocabulary_words)
-        effectiveness_metrics["vocabulary_integration"] = integration_score
+    else:
+        integration_score = 0.5
     
-    # Analisar adequação ao nível CEFR
-    strategy_cefr_map = {
+    # Adequação CEFR (mapeamento técnico)
+    cefr_mapping = {
         "chunks": {"A1": 0.9, "A2": 0.8, "B1": 0.7, "B2": 0.6, "C1": 0.5, "C2": 0.4},
         "substantivos_compostos": {"A1": 0.8, "A2": 0.9, "B1": 0.7, "B2": 0.6, "C1": 0.5, "C2": 0.4},
         "afixacao": {"A1": 0.6, "A2": 0.7, "B1": 0.9, "B2": 0.8, "C1": 0.7, "C2": 0.6},
@@ -1035,68 +1134,174 @@ def analyze_tips_effectiveness(
     }
     
     strategy_name = tips_content.strategy.value
-    if strategy_name in strategy_cefr_map:
-        cefr_score = strategy_cefr_map[strategy_name].get(cefr_level, 0.7)
-        effectiveness_metrics["cefr_appropriateness"] = cefr_score
+    cefr_score = cefr_mapping.get(strategy_name, {}).get(cefr_level, 0.7)
     
-    # Analisar coerência da estratégia
+    # Coerência da estratégia (análise técnica)
     has_explanation = len(tips_content.explanation) > 50
     has_examples = len(tips_content.examples) >= 3
     has_practice = len(tips_content.practice_suggestions) >= 2
     has_memory = len(tips_content.memory_techniques) >= 2
     
     coherence_score = sum([has_explanation, has_examples, has_practice, has_memory]) / 4
-    effectiveness_metrics["strategy_coherence"] = coherence_score
     
-    # Analisar consciência fonética
+    # Consciência fonética (análise técnica)
     phonetic_score = 0.0
     if tips_content.phonetic_focus:
         phonetic_score += 0.5
     if tips_content.pronunciation_tips:
         phonetic_score += 0.5
     
-    effectiveness_metrics["phonetic_awareness"] = phonetic_score
+    # Score geral
+    overall_score = (integration_score + cefr_score + coherence_score + phonetic_score) / 4
     
-    # Calcular score geral
-    overall_score = sum(effectiveness_metrics.values()) / len(effectiveness_metrics)
-    effectiveness_metrics["overall_score"] = overall_score
-    
-    return effectiveness_metrics
+    return {
+        "vocabulary_integration": integration_score,
+        "cefr_appropriateness": cefr_score,
+        "strategy_coherence": coherence_score,
+        "phonetic_awareness": phonetic_score,
+        "overall_score": overall_score
+    }
 
 
-def generate_strategy_recommendations(
-    vocabulary_patterns: Dict[str, Any],
+async def generate_strategy_recommendations_ai(
+    vocabulary_items: List[Dict[str, Any]],
     cefr_level: str,
-    used_strategies: List[str]
+    used_strategies: List[str],
+    unit_context: str
 ) -> List[str]:
-    """Gerar recomendações de estratégias baseadas no contexto."""
+    """Gerar recomendações de estratégias via IA."""
     
-    recommendations = []
+    tips_service = TipsGeneratorService()
     
-    # Recomendações baseadas em padrões de vocabulário
-    if vocabulary_patterns.get("has_affixes") and "afixacao" not in used_strategies:
-        recommendations.append("Considere usar TIP 1: Afixação devido aos padrões morfológicos no vocabulário")
+    system_prompt = """Você é um especialista em recomendação de estratégias pedagógicas TIPS.
     
-    if vocabulary_patterns.get("has_compounds") and "substantivos_compostos" not in used_strategies:
-        recommendations.append("TIP 2: Substantivos Compostos seria eficaz para este vocabulário")
+    Analise o contexto e gere recomendações específicas para otimizar o aprendizado."""
     
-    if vocabulary_patterns.get("has_collocations") and "colocacoes" not in used_strategies:
-        recommendations.append("TIP 3: Colocações pode melhorar a naturalidade do uso")
+    vocabulary_words = [item.get("word", "") for item in vocabulary_items[:10]]
     
-    # Recomendações baseadas no nível CEFR
-    if cefr_level in ["A1", "A2"] and "chunks" not in used_strategies:
-        recommendations.append("TIP 6: Chunks é altamente recomendado para níveis básicos")
+    human_prompt = f"""Gere recomendações de estratégias TIPS para:
     
-    if cefr_level in ["B2", "C1", "C2"] and "idiomas" not in used_strategies:
-        recommendations.append("TIP 5: Idiomas ajudaria a desenvolver fluência avançada")
+    VOCABULÁRIO: {', '.join(vocabulary_words)}
+    NÍVEL: {cefr_level}
+    CONTEXTO: {unit_context}
+    ESTRATÉGIAS JÁ USADAS: {', '.join(used_strategies)}
     
-    # Recomendações baseadas no balanceamento
-    strategy_counts = {}
-    for strategy in used_strategies:
-        strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
+    Estratégias disponíveis: {', '.join(TIPS_STRATEGIES)}
     
-    overused_strategies = [s for s, count in strategy_counts.items() if count > 2]
-    if overused_strategies:
-        recommendations.append(f"Diversificar estratégias - {', '.join(overused_strategies)} sendo usadas em excesso")
+    Analise e recomende:
+    1. Estratégias que funcionariam bem com este vocabulário
+    2. Adequação ao nível {cefr_level}
+    3. Balanceamento com estratégias já usadas
+    4. Sequência pedagógica ideal
     
-    return recommendations[:3]  # Máximo 3 recomendações
+    Retorne máximo 3 recomendações específicas com justificativas breves."""
+    
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
+        ]
+        
+        response = await tips_service.llm.ainvoke(messages)
+        
+        # Extrair recomendações da resposta
+        recommendations = []
+        lines = response.content.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if any(strategy in line.lower() for strategy in TIPS_STRATEGIES):
+                # Encontrar qual estratégia está mencionada
+                for strategy in TIPS_STRATEGIES:
+                    if strategy in line.lower():
+                        if line not in recommendations:  # Evitar duplicatas
+                            recommendations.append(line[:200])  # Limitar tamanho
+                        break
+        
+        return recommendations[:3]
+        
+    except Exception as e:
+        logger.warning(f"Erro na geração de recomendações via IA: {str(e)}")
+        
+        # Fallback técnico
+        fallback_recommendations = []
+        
+        # Recomendar estratégias menos usadas
+        strategy_counts = {s: used_strategies.count(s) for s in TIPS_STRATEGIES}
+        least_used = sorted(strategy_counts.items(), key=lambda x: x[1])
+        
+        for strategy, count in least_used[:3]:
+            if count < 2:
+                fallback_recommendations.append(f"Considere {TIPS_STRATEGY_NAMES[strategy]} - adequada para {cefr_level}")
+        
+        return fallback_recommendations[:3]
+
+async def _add_complementary_strategies_ai(
+        self, 
+        enriched_tips: Dict[str, Any], 
+        rag_context: Dict[str, Any],
+        selected_strategy: str
+    ) -> Dict[str, Any]:
+        """Adicionar estratégias complementares via análise IA."""
+        
+        system_prompt = """Você é um especialista em sequenciação pedagógica de estratégias TIPS.
+        
+        Analise e recomende estratégias complementares considerando a estratégia atual e histórico de uso."""
+        
+        used_strategies = rag_context.get("used_strategies", [])
+        
+        human_prompt = f"""Recomende estratégias complementares para:
+        
+        ESTRATÉGIA ATUAL: {selected_strategy}
+        ESTRATÉGIAS JÁ USADAS: {', '.join(used_strategies)}
+        
+        Estratégias TIPS disponíveis:
+        - afixacao
+        - substantivos_compostos
+        - colocacoes
+        - expressoes_fixas
+        - idiomas
+        - chunks
+        
+        Analise:
+        1. Que estratégias complementam pedagogicamente {selected_strategy}?
+        2. Quais não foram overutilizadas (aparecem < 2 vezes em {used_strategies})?
+        3. Qual sequência pedagógica faz sentido?
+        
+        Retorne máximo 3 estratégias complementares em ordem de prioridade.
+        Formato: ["estrategia1", "estrategia2", "estrategia3"]"""
+        
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt)
+            ]
+            
+            response = await self.llm.ainvoke(messages)
+            
+            # Extrair estratégias da resposta
+            complementary = []
+            response_lower = response.content.lower()
+            
+            for strategy in TIPS_STRATEGIES:
+                if strategy != selected_strategy and strategy in response_lower:
+                    strategy_count = used_strategies.count(strategy)
+                    if strategy_count < 2:  # Não overutilizada
+                        complementary.append(strategy)
+            
+            enriched_tips["complementary_strategies"] = complementary[:3]
+            
+            return enriched_tips
+            
+        except Exception as e:
+            logger.warning(f"Erro na análise de estratégias complementares via IA: {str(e)}")
+            
+            # Fallback técnico
+                        # Fallback técnico
+            fallback_complementary = [
+                s for s in TIPS_STRATEGIES 
+                if s != selected_strategy and used_strategies.count(s) < 2
+            ]
+            enriched_tips["complementary_strategies"] = fallback_complementary[:3]
+            
+            return enriched_tips
