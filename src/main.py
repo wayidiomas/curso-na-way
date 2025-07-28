@@ -1,5 +1,5 @@
-# src/main.py - ATUALIZADO COM RATE LIMITING E AUDITORIA
-"""Aplicação principal FastAPI com rate limiting, auditoria e middleware."""
+# src/main.py - ATUALIZADO COM NOVA ESTRUTURA DA API
+"""Aplicação principal FastAPI com rate limiting, auditoria e estrutura hierárquica completa."""
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -7,8 +7,14 @@ import uvicorn
 import time
 import logging
 
+# Importações da nova estrutura da API
+from src.api import (
+    AVAILABLE_ROUTERS, API_INFO, API_TAGS, 
+    MIDDLEWARE_CONFIG, get_api_overview, validate_api_health,
+    get_hierarchical_flow
+)
+
 # Importações existentes
-from src.api import health
 from src.core.database import init_database
 from config.logging import setup_logging
 
@@ -16,10 +22,7 @@ from config.logging import setup_logging
 from src.core.rate_limiter import RateLimitMiddleware, rate_limiter
 from src.core.audit_logger import audit_logger_instance, AuditEventType
 
-# Endpoints hierárquicos
-from src.api.v2 import courses, books, units
-
-# Imports existentes (se houver)
+# Imports legados (se houver)
 try:
     from src.api import auth, apostilas, vocabs, content, images, pdf
     legacy_endpoints_available = True
@@ -31,32 +34,37 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gerencia ciclo de vida da aplicação."""
+    """Gerencia ciclo de vida da aplicação com validação da API."""
     # Startup
     setup_logging()
     await init_database()
+    
+    # Validar configuração da API
+    api_health = validate_api_health()
+    if api_health["configuration_valid"]:
+        logger.info(f"✅ API V2 configurada corretamente ({api_health['completion_status']['percentage']:.1f}% completa)")
+        logger.info(f"📊 Módulos carregados: {api_health['completion_status']['loaded']}/{api_health['completion_status']['expected']}")
+    else:
+        logger.warning(f"⚠️ Problemas na configuração da API: {api_health['missing_modules']}")
     
     # Log de inicialização da aplicação
     await audit_logger_instance.log_event(
         event_type=AuditEventType.API_ERROR,  # Usando como evento de sistema
         additional_data={
             "event": "application_startup",
-            "version": "2.0.0",
-            "features": [
-                "hierarchical_structure",
-                "rate_limiting", 
-                "audit_logging",
-                "pagination",
-                "rag_integration"
-            ]
+            "version": API_INFO["version"],
+            "api_health": api_health,
+            "features": API_INFO["features"]
         }
     )
     
-    print("🚀 Curso Na Way V2 iniciado com todas as melhorias!")
+    print("🚀 Curso Na Way V2 iniciado com estrutura hierárquica completa!")
+    print(f"✅ API V2: {api_health['completion_status']['percentage']:.1f}% implementada")
     print("✅ Rate Limiting ativo")
     print("✅ Auditoria configurada") 
     print("✅ Paginação implementada")
     print("✅ Hierarquia Course → Book → Unit")
+    print(f"📚 Módulos V2: {', '.join(AVAILABLE_ROUTERS['v2'].keys())}")
     
     yield
     
@@ -72,25 +80,29 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Curso Na Way API V2",
-    description="Sistema Hierárquico de Geração de Apostilas de Inglês com IA",
-    version="2.0.0",
+    title=API_INFO["name"],
+    description=API_INFO["description"],
+    version=API_INFO["version"],
     lifespan=lifespan,
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": tag_name, "description": tag_info.get("description", "")} 
+        for tag_name, tag_info in API_TAGS.items()
+    ]
 )
 
 # =============================================================================
-# MIDDLEWARE CONFIGURATION
+# MIDDLEWARE CONFIGURATION - USANDO CONFIGURAÇÕES CENTRALIZADAS
 # =============================================================================
 
-# 1. CORS Middleware
+# 1. CORS Middleware - Usando configuração centralizada
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure adequadamente em produção
+    allow_origins=MIDDLEWARE_CONFIG["cors"]["allow_origins"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=MIDDLEWARE_CONFIG["cors"]["allow_methods"],
+    allow_headers=MIDDLEWARE_CONFIG["cors"]["allow_headers"],
 )
 
 # 2. Rate Limiting Middleware
@@ -184,15 +196,22 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 # =============================================================================
-# ROUTERS HIERÁRQUICOS (VERSÃO 2)
+# ROUTERS V2 - USANDO ESTRUTURA CENTRALIZADA
 # =============================================================================
 
 # Health check (sempre primeiro)
-app.include_router(health.router, prefix="/health", tags=["health"])
-
-# Endpoints hierárquicos Course → Book → Unit
 app.include_router(
-    courses.router, 
+    AVAILABLE_ROUTERS["health"], 
+    prefix="/health", 
+    tags=["health"]
+)
+
+# Registrar todos os routers V2 automaticamente
+v2_routers = AVAILABLE_ROUTERS["v2"]
+
+# Courses
+app.include_router(
+    v2_routers["courses"], 
     prefix="/api/v2", 
     tags=["v2-courses"],
     responses={
@@ -203,8 +222,9 @@ app.include_router(
     }
 )
 
+# Books
 app.include_router(
-    books.router, 
+    v2_routers["books"], 
     prefix="/api/v2", 
     tags=["v2-books"],
     responses={
@@ -215,8 +235,9 @@ app.include_router(
     }
 )
 
+# Units
 app.include_router(
-    units.router, 
+    v2_routers["units"], 
     prefix="/api/v2", 
     tags=["v2-units"],
     responses={
@@ -224,6 +245,84 @@ app.include_router(
         400: {"description": "Dados inválidos ou hierarquia incorreta"},
         429: {"description": "Rate limit excedido"},
         500: {"description": "Erro interno"}
+    }
+)
+
+# Vocabulary
+app.include_router(
+    v2_routers["vocabulary"], 
+    prefix="/api/v2", 
+    tags=["v2-vocabulary"],
+    responses={
+        404: {"description": "Unidade não encontrada"},
+        400: {"description": "Unidade não pronta para geração de vocabulário"},
+        429: {"description": "Rate limit excedido"},
+        500: {"description": "Erro na geração de vocabulário"}
+    }
+)
+
+# Sentences
+app.include_router(
+    v2_routers["sentences"], 
+    prefix="/api/v2", 
+    tags=["v2-sentences"],
+    responses={
+        404: {"description": "Unidade não encontrada"},
+        400: {"description": "Vocabulário necessário antes de gerar sentences"},
+        429: {"description": "Rate limit excedido"},
+        500: {"description": "Erro na geração de sentences"}
+    }
+)
+
+# Tips (Estratégias lexicais)
+app.include_router(
+    v2_routers["tips"], 
+    prefix="/api/v2", 
+    tags=["v2-tips"],
+    responses={
+        404: {"description": "Unidade não encontrada"},
+        400: {"description": "Apenas para unidades lexicais"},
+        429: {"description": "Rate limit excedido"},
+        500: {"description": "Erro na geração de estratégias TIPS"}
+    }
+)
+
+# Grammar (Estratégias gramaticais)
+app.include_router(
+    v2_routers["grammar"], 
+    prefix="/api/v2", 
+    tags=["v2-grammar"],
+    responses={
+        404: {"description": "Unidade não encontrada"},
+        400: {"description": "Apenas para unidades gramaticais"},
+        429: {"description": "Rate limit excedido"},
+        500: {"description": "Erro na geração de estratégias GRAMMAR"}
+    }
+)
+
+# Assessments
+app.include_router(
+    v2_routers["assessments"], 
+    prefix="/api/v2", 
+    tags=["v2-assessments"],
+    responses={
+        404: {"description": "Unidade não encontrada"},
+        400: {"description": "Conteúdo da unidade incompleto"},
+        429: {"description": "Rate limit excedido"},
+        500: {"description": "Erro na geração de assessments"}
+    }
+)
+
+# Q&A
+app.include_router(
+    v2_routers["qa"], 
+    prefix="/api/v2", 
+    tags=["v2-qa"],
+    responses={
+        404: {"description": "Unidade não encontrada"},
+        400: {"description": "Conteúdo da unidade necessário"},
+        429: {"description": "Rate limit excedido"},
+        500: {"description": "Erro na geração de Q&A"}
     }
 )
 
@@ -243,36 +342,38 @@ else:
     print("⚠️  Endpoints legados V1 não encontrados - apenas V2 disponível")
 
 # =============================================================================
-# ENDPOINTS INFORMATIVOS E DE SISTEMA
+# ENDPOINTS INFORMATIVOS E DE SISTEMA - USANDO ESTRUTURA CENTRALIZADA
 # =============================================================================
 
-@app.get("/")
+@app.get("/", tags=["root"])
 async def root(request: Request):
-    """Informações gerais da API."""
+    """Informações gerais da API usando estrutura centralizada."""
     await audit_logger_instance.log_event(
         event_type=AuditEventType.COURSE_VIEWED,
         request=request,
         additional_data={"endpoint": "root_info_access"}
     )
     
+    hierarchical_flow = get_hierarchical_flow()
+    
     return {
-        "name": "Curso Na Way API V2",
-        "version": "2.0.0",
-        "description": "Sistema hierárquico para geração de apostilas de inglês",
-        "architecture": "Course → Book → Unit",
-        "features": {
-            "hierarchical_structure": "Estrutura obrigatória de 3 níveis",
-            "rate_limiting": "Proteção contra abuso com limites por endpoint",
-            "audit_logging": "Log completo de todas as operações",
-            "pagination": "Paginação inteligente em todos os endpoints de listagem",
-            "rag_integration": "RAG contextual para progressão pedagógica",
-            "quality_control": "Checklist automático de 22 pontos"
-        },
+        "name": API_INFO["name"],
+        "version": API_INFO["version"],
+        "description": API_INFO["description"],
+        "architecture": API_INFO["architecture"],
+        "features": API_INFO["features"],
+        "author": API_INFO.get("author", "Curso Na Way"),
         "endpoints": {
             "v2": {
                 "courses": "/api/v2/courses",
                 "books": "/api/v2/courses/{course_id}/books", 
                 "units": "/api/v2/books/{book_id}/units",
+                "vocabulary": "/api/v2/units/{unit_id}/vocabulary",
+                "sentences": "/api/v2/units/{unit_id}/sentences",
+                "tips": "/api/v2/units/{unit_id}/tips",
+                "grammar": "/api/v2/units/{unit_id}/grammar",
+                "assessments": "/api/v2/units/{unit_id}/assessments",
+                "qa": "/api/v2/units/{unit_id}/qa",
                 "health": "/health",
                 "system": "/system"
             },
@@ -280,32 +381,139 @@ async def root(request: Request):
         },
         "documentation": {
             "swagger": "/docs",
-            "redoc": "/redoc"
+            "redoc": "/redoc",
+            "api_overview": "/api/overview"
         },
-        "rate_limits": {
-            "courses": "10-100 requests/minute dependendo da operação",
-            "books": "20-150 requests/minute dependendo da operação", 
-            "units": "5-150 requests/minute dependendo da operação",
-            "generation": "2-5 requests/minute para operações pesadas"
-        },
-        "hierarchy_flow": {
-            "1": "Criar Course com níveis CEFR",
-            "2": "Criar Books por nível no Course",
-            "3": "Criar Units sequenciais no Book",
-            "4": "Gerar conteúdo com RAG contextual"
-        },
-        "pagination_examples": {
-            "basic": "GET /api/v2/courses?page=1&size=20",
-            "filtered": "GET /api/v2/courses?language_variant=american_english&target_level=A2",
-            "sorted": "GET /api/v2/courses?sort_by=name&sort_order=asc",
-            "search": "GET /api/v2/courses?search=business&page=2"
+        "hierarchical_flow": hierarchical_flow,
+        "content_generation_flow": [
+            "1. POST /api/v2/units/{id}/vocabulary (RAG + MCP images)",
+            "2. POST /api/v2/units/{id}/sentences (conectadas ao vocabulário)",
+            "3. POST /api/v2/units/{id}/tips (unidades lexicais)",
+            "3. POST /api/v2/units/{id}/grammar (unidades gramaticais)",
+            "4. POST /api/v2/units/{id}/assessments (2 atividades balanceadas)",
+            "5. POST /api/v2/units/{id}/qa (opcional - Q&A pedagógico)"
+        ],
+        "rag_features": {
+            "vocabulary_deduplication": "Prevenção de repetições com contexto histórico",
+            "strategy_balancing": "Distribuição inteligente de estratégias TIPS/GRAMMAR",
+            "assessment_variety": "Seleção automática de 2/7 tipos de atividades",
+            "progression_analysis": "Análise contínua de progressão pedagógica"
         }
     }
 
 
-@app.get("/system/stats")
+@app.get("/api/overview", tags=["root"])
+async def api_overview_endpoint(request: Request):
+    """Visão geral completa da API usando função centralizada."""
+    await audit_logger_instance.log_event(
+        event_type=AuditEventType.COURSE_VIEWED,
+        request=request,
+        additional_data={"endpoint": "api_overview_access"}
+    )
+    
+    return get_api_overview()
+
+
+@app.get("/api/v2", tags=["v2-info"])
+async def api_v2_info(request: Request):
+    """Informações específicas da API V2 com dados centralizados."""
+    await audit_logger_instance.log_event(
+        event_type=AuditEventType.COURSE_VIEWED,
+        request=request,
+        additional_data={"endpoint": "v2_info_access"}
+    )
+    
+    # Obter status de validação atualizado
+    api_health = validate_api_health()
+    hierarchical_flow = get_hierarchical_flow()
+    
+    return {
+        "version": "2.0",
+        "api_health": api_health,
+        "hierarchy": API_INFO["architecture"],
+        "implementation_status": {
+            "completion_percentage": api_health["completion_status"]["percentage"],
+            "modules_loaded": api_health["completion_status"]["loaded"],
+            "modules_expected": api_health["completion_status"]["expected"],
+            "missing_modules": api_health.get("missing_modules", [])
+        },
+        "improvements": {
+            "rate_limiting": {
+                "description": "Proteção inteligente contra abuso",
+                "implementation": "Redis-backed com fallback em memória",
+                "granularity": "Por endpoint e por usuário"
+            },
+            "pagination": {
+                "description": "Paginação automática em listagens",
+                "features": ["Ordenação customizável", "Filtros avançados", "Metadados completos"],
+                "limits": "Máximo 100 itens por página"
+            },
+            "audit_logging": {
+                "description": "Log estruturado de todas as operações",
+                "features": ["Tracking de performance", "Contexto hierárquico", "Métricas de uso"],
+                "storage": "Arquivo JSON estruturado"
+            },
+            "rag_integration": {
+                "description": "RAG contextual para progressão pedagógica",
+                "features": ["Prevenção de repetições", "Balanceamento de estratégias", "Análise de qualidade"],
+                "intelligence": "Contexto hierárquico completo Course→Book→Unit"
+            }
+        },
+        "hierarchical_flow": hierarchical_flow,
+        "content_generation": {
+            "vocabulary": {
+                "endpoint": "POST /api/v2/units/{id}/vocabulary",
+                "features": ["RAG deduplication", "MCP image analysis", "IPA phonemes", "CEFR adaptation"],
+                "dependencies": ["unit_created", "images_uploaded"]
+            },
+            "sentences": {
+                "endpoint": "POST /api/v2/units/{id}/sentences",
+                "features": ["Vocabulary integration", "Contextual coherence", "Progression awareness"],
+                "dependencies": ["vocabulary_generated"]
+            },
+            "strategies": {
+                "tips": {
+                    "endpoint": "POST /api/v2/units/{id}/tips",
+                    "description": "6 estratégias lexicais com seleção inteligente",
+                    "strategies": ["afixacao", "substantivos_compostos", "colocacoes", "expressoes_fixas", "idiomas", "chunks"],
+                    "for": "lexical_units"
+                },
+                "grammar": {
+                    "endpoint": "POST /api/v2/units/{id}/grammar",
+                    "description": "2 estratégias gramaticais com foco brasileiro",
+                    "strategies": ["explicacao_sistematica", "prevencao_erros_l1"],
+                    "for": "grammar_units",
+                    "specialization": "Prevenção de interferência português→inglês"
+                }
+            },
+            "assessments": {
+                "endpoint": "POST /api/v2/units/{id}/assessments",
+                "features": ["7 tipos disponíveis", "Seleção automática de 2", "Balanceamento inteligente"],
+                "types": ["cloze_test", "gap_fill", "reordenacao", "transformacao", "multipla_escolha", "verdadeiro_falso", "matching"]
+            },
+            "qa": {
+                "endpoint": "POST /api/v2/units/{id}/qa",
+                "features": ["Taxonomia de Bloom", "Perguntas de pronúncia", "Progressão pedagógica"],
+                "cognitive_levels": ["remember", "understand", "apply", "analyze", "evaluate", "create"]
+            }
+        },
+        "workflow_example": {
+            "step_1": "POST /api/v2/courses (criar curso com níveis CEFR)",
+            "step_2": "POST /api/v2/courses/{course_id}/books (criar books por nível)",
+            "step_3": "POST /api/v2/books/{book_id}/units (criar units com imagens)",
+            "step_4": "GET /api/v2/units/{unit_id}/context (verificar contexto RAG)",
+            "step_5": "POST /api/v2/units/{unit_id}/vocabulary (gerar vocabulário)",
+            "step_6": "POST /api/v2/units/{unit_id}/sentences (gerar sentences)",
+            "step_7": "POST /api/v2/units/{unit_id}/tips OU /grammar (estratégias)",
+            "step_8": "POST /api/v2/units/{unit_id}/assessments (finalizar unidade)",
+            "step_9": "POST /api/v2/units/{unit_id}/qa (opcional - Q&A pedagógico)"
+        }
+    }
+
+
+@app.get("/system/stats", tags=["system"])
 async def system_stats(request: Request):
-    """Estatísticas do sistema."""
+    """Estatísticas do sistema com informações da API."""
     await audit_logger_instance.log_event(
         event_type=AuditEventType.COURSE_VIEWED,
         request=request,
@@ -316,10 +524,21 @@ async def system_stats(request: Request):
         from src.services.hierarchical_database import hierarchical_db
         analytics = await hierarchical_db.get_system_analytics()
         
+        # Adicionar informações da API
+        api_health = validate_api_health()
+        
         return {
             "success": True,
-            "data": analytics,
-            "message": "Estatísticas do sistema",
+            "data": {
+                **analytics,
+                "api_status": {
+                    "version": API_INFO["version"],
+                    "health": api_health,
+                    "features_enabled": API_INFO["features"],
+                    "modules_loaded": list(AVAILABLE_ROUTERS["v2"].keys())
+                }
+            },
+            "message": "Estatísticas do sistema com status da API",
             "timestamp": analytics.get("generated_at")
         }
     except Exception as e:
@@ -327,13 +546,14 @@ async def system_stats(request: Request):
         return {
             "success": False,
             "error": "Erro ao obter estatísticas",
-            "message": str(e)
+            "message": str(e),
+            "api_health": validate_api_health()
         }
 
 
-@app.get("/system/health")
+@app.get("/system/health", tags=["system"])
 async def detailed_health_check(request: Request):
-    """Health check detalhado do sistema."""
+    """Health check detalhado do sistema com validação da API."""
     await audit_logger_instance.log_event(
         event_type=AuditEventType.COURSE_VIEWED,
         request=request,
@@ -344,7 +564,8 @@ async def detailed_health_check(request: Request):
         "status": "healthy",
         "timestamp": time.time(),
         "services": {},
-        "features": {}
+        "features": {},
+        "api_configuration": validate_api_health()
     }
     
     # Check Database
@@ -372,11 +593,16 @@ async def detailed_health_check(request: Request):
     health_status["features"]["audit_logging"] = "active"
     health_status["features"]["pagination"] = "active"
     health_status["features"]["hierarchical_structure"] = "active"
+    health_status["features"]["rag_integration"] = "active"
+    
+    # Verificar se API está degradada
+    if not health_status["api_configuration"]["configuration_valid"]:
+        health_status["status"] = "degraded"
     
     return health_status
 
 
-@app.get("/system/rate-limits")
+@app.get("/system/rate-limits", tags=["system"])
 async def rate_limits_info(request: Request):
     """Informações sobre rate limits do sistema."""
     from src.core.rate_limiter import RATE_LIMIT_CONFIG
@@ -389,6 +615,7 @@ async def rate_limits_info(request: Request):
     
     return {
         "rate_limits": RATE_LIMIT_CONFIG,
+        "global_config": MIDDLEWARE_CONFIG["rate_limiting"],
         "description": "Rate limits por endpoint",
         "identification": {
             "priority": "user_id (if authenticated) > IP address",
@@ -435,7 +662,8 @@ async def not_found_handler(request: Request, exc):
         "suggestions": [
             "Verifique se o ID está correto",
             "Confirme que o recurso existe na hierarquia",
-            "Consulte /docs para endpoints disponíveis"
+            "Consulte /docs para endpoints disponíveis",
+            "Verificar /api/overview para estrutura da API"
         ]
     }
 
@@ -473,7 +701,8 @@ async def rate_limit_handler(request: Request, exc):
         "suggestions": [
             f"Aguarde {rate_limit_info.get('retry_after', 60)} segundos antes de tentar novamente",
             "Considere implementar cache local para reduzir requests",
-            "Verifique se não há requests desnecessários em loop"
+            "Verifique se não há requests desnecessários em loop",
+            "Consulte /system/rate-limits para limites específicos"
         ]
     }
 
@@ -507,7 +736,8 @@ async def internal_error_handler(request: Request, exc):
         "suggestions": [
             "Tente novamente em alguns instantes",
             "Verifique se todas as dependências estão funcionando",
-            "Contate o suporte se o problema persistir"
+            "Contate o suporte se o problema persistir",
+            "Consulte /system/health para status dos serviços"
         ]
     }
 
@@ -535,172 +765,5 @@ async def validation_error_handler(request: Request, exc):
         "details": {
             "path": str(request.url),
             "method": request.method,
-            "validation_errors": getattr(exc, 'errors', [])
-        },
-        "suggestions": [
-            "Verifique os tipos de dados enviados",
-            "Consulte a documentação da API em /docs",
-            "Valide campos obrigatórios"
-        ]
-    }
-
-
-# =============================================================================
-# STARTUP E SHUTDOWN HOOKS ADICIONAIS
-# =============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Eventos de startup adicionais."""
-    logger.info("🔧 Configurações adicionais de startup...")
-    
-    # Configurar rate limiter
-    try:
-        from src.core.rate_limiter import rate_limiter
-        # Teste de conectividade
-        logger.info("✅ Rate limiter configurado")
-    except Exception as e:
-        logger.warning(f"⚠️ Rate limiter com limitações: {str(e)}")
-    
-    # Configurar audit logger
-    try:
-        from src.core.audit_logger import audit_logger_instance
-        logger.info("✅ Audit logger configurado")
-    except Exception as e:
-        logger.warning(f"⚠️ Audit logger com limitações: {str(e)}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Eventos de shutdown."""
-    logger.info("🛑 Executando shutdown procedures...")
-    
-    # Log final de shutdown
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.API_ERROR,  # Usar como evento de sistema
-        additional_data={
-            "event": "graceful_shutdown",
-            "message": "Application shutdown completed successfully"
-        }
-    )
-
-
-# =============================================================================
-# MIDDLEWARE DE PERFORMANCE MONITORING
-# =============================================================================
-
-@app.middleware("http")
-async def performance_monitoring_middleware(request: Request, call_next):
-    """Middleware para monitoramento de performance."""
-    start_time = time.time()
-    
-    # Executar request
-    response = await call_next(request)
-    
-    # Calcular tempo de processamento
-    process_time = time.time() - start_time
-    
-    # Adicionar header de performance
-    response.headers["X-Process-Time"] = str(process_time)
-    
-    # Log de performance para requests lentos
-    if process_time > 1.0:  # > 1 segundo
-        await audit_logger_instance.log_event(
-            event_type=AuditEventType.PERFORMANCE_ALERT,
-            request=request,
-            additional_data={
-                "slow_request": True,
-                "processing_time": process_time,
-                "threshold_exceeded": "1.0_seconds",
-                "path": request.url.path,
-                "method": request.method
-            },
-            performance_metrics={
-                "processing_time_ms": process_time * 1000,
-                "status_code": response.status_code
-            }
-        )
-    
-    return response
-
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "src.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info",
-        access_log=True
-    )
-
-
-@app.get("/api/v2")
-async def api_v2_info(request: Request):
-    """Informações específicas da API V2."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.COURSE_VIEWED,
-        request=request,
-        additional_data={"endpoint": "v2_info_access"}
-    )
-    
-    return {
-        "version": "2.0",
-        "hierarchy": "Course → Book → Unit",
-        "improvements": {
-            "rate_limiting": {
-                "description": "Proteção inteligente contra abuso",
-                "implementation": "Redis-backed com fallback em memória",
-                "granularity": "Por endpoint e por usuário"
-            },
-            "pagination": {
-                "description": "Paginação automática em listagens",
-                "features": ["Ordenação customizável", "Filtros avançados", "Metadados completos"],
-                "limits": "Máximo 100 itens por página"
-            },
-            "audit_logging": {
-                "description": "Log estruturado de todas as operações",
-                "features": ["Tracking de performance", "Contexto hierárquico", "Métricas de uso"],
-                "storage": "Arquivo JSON estruturado"
-            }
-        },
-        "key_features": {
-            "hierarchical_structure": "Estrutura obrigatória de 3 níveis",
-            "rag_integration": "RAG contextual para progressão pedagógica",
-            "vocabulary_tracking": "Prevenção de repetições desnecessárias",
-            "strategy_balancing": "Distribuição inteligente de estratégias",
-            "quality_control": "Checklist automático de 22 pontos"
-        },
-        "available_endpoints": {
-            "courses": {
-                "POST /api/v2/courses": "Criar novo curso",
-                "GET /api/v2/courses": "Listar cursos (paginado)",
-                "GET /api/v2/courses/{id}": "Detalhes do curso",
-                "GET /api/v2/courses/{id}/hierarchy": "Hierarquia completa",
-                "GET /api/v2/courses/{id}/progress": "Análise de progresso",
-                "PUT /api/v2/courses/{id}": "Atualizar curso",
-                "DELETE /api/v2/courses/{id}": "Deletar curso"
-            },
-            "books": {
-                "POST /api/v2/courses/{course_id}/books": "Criar book no curso",
-                "GET /api/v2/courses/{course_id}/books": "Listar books do curso (paginado)",
-                "GET /api/v2/books/{id}": "Detalhes do book",
-                "GET /api/v2/books/{id}/progression": "Análise de progressão"
-            },
-            "units": {
-                "POST /api/v2/books/{book_id}/units": "Criar unit no book",
-                "GET /api/v2/books/{book_id}/units": "Listar units do book (paginado)",
-                "GET /api/v2/units/{id}": "Detalhes completos da unit",
-                "GET /api/v2/units/{id}/context": "Contexto RAG da unit",
-                "PUT /api/v2/units/{id}/status": "Atualizar status"
-            }
-        },
-        "workflow_example": {
-            "step_1": "POST /api/v2/courses (criar curso)",
-            "step_2": "POST /api/v2/courses/{course_id}/books (criar books por nível)",
-            "step_3": "POST /api/v2/books/{book_id}/units (criar units sequenciais)",
-            "step_4": "GET /api/v2/units/{unit_id}/context (verificar RAG)",
-            "step_5": "Próximos prompts: vocabulário, sentences, strategies, assessments"}}
-
-
-
+            "validation_errors": getattr(exc, 'errors', []),
+            "request_id": getattr(request.state, 'request_id', 'unknown')   
