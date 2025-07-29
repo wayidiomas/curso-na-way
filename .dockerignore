@@ -1,0 +1,145 @@
+# .dockerignore - IVO V2
+# Otimizar build do Docker excluindo arquivos desnecessários
+
+# =============================================================================
+# GIT E CONTROLE DE VERSÃO
+# =============================================================================
+.git
+.gitignore
+.gitattributes
+.github/
+
+# =============================================================================
+# AMBIENTES VIRTUAIS E CACHE PYTHON
+# =============================================================================
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =============================================================================
+# FERRAMENTAS DE DESENVOLVIMENTO
+# =============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# =============================================================================
+# EDITORES E IDEs
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# =============================================================================
+# LOGS E ARQUIVOS TEMPORÁRIOS
+# =============================================================================
+logs/*.log
+*.log
+temp/
+tmp/
+cache/
+.cache/
+uploads/test/
+*.tmp
+
+# =============================================================================
+# DOCUMENTAÇÃO E ASSETS DESNECESSÁRIOS
+# =============================================================================
+*.md
+!README.md
+docs/
+screenshots/
+assets/dev/
+
+# =============================================================================
+# CONFIGURAÇÕES LOCAIS
+# =============================================================================
+.env.local
+.env.development
+.env.test
+*.local
+
+# =============================================================================
+# DOCKER
+# =============================================================================
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# =============================================================================
+# TESTES E DADOS DE TESTE
+# =============================================================================
+tests/
+test_*.py
+*_test.py
+fixtures/
+mock_data/
+
+# =============================================================================
+# DEPENDÊNCIAS LOCAIS (serão instaladas no container)
+# =============================================================================
+node_modules/
+.npm
+.yarn
+
+# .dockerignore - Curso Na Way
+# Otimizar build do Docker para Sistema de Geração de Apostilas com IA
+
+# =============================================================================
+# ARQUIVOS ESPECÍFICOS DO CURSO NA WAY
+# =============================================================================
+# Arquivos de desenvolvimento local
+dev_*.py
+scratch/
+experiments/
+local_*.py
+
+# Dados de treinamento e arquivos grandes
+training_data/
+models/
+*.pkl
+*.model
+
+# Arquivos gerados pelo sistema
+generated_reports/
+export_files/
+analysis_cache/
+apostilas_generated/
+
+# Configurações específicas de ambiente
+.env.local
+.env.development
+.env.test
+local_config.yaml
