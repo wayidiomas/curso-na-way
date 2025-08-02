@@ -38,11 +38,11 @@ dependencies = [
     
     # PDF Generation
     "reportlab>=4.0.0",
-    "weasyprint>=60.0",
+    # "weasyprint>=60.0",  # TEMPORARIAMENTE COMENTADO - pode causar problemas no Alpine
     
-    # Image Processing
+    # Image Processing - OTIMIZADO PARA DOCKER
     "pillow>=10.0.0",
-    "opencv-python>=4.8.0",
+    "opencv-python-headless>=4.8.0",  # MUDANÇA: headless é mais leve e compatível
     
     # MCP Protocol
     "mcp>=1.0.0",

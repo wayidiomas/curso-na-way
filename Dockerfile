@@ -34,8 +34,8 @@ RUN addgroup -g 1001 -S appgroup && \
 # Diretório de trabalho
 WORKDIR /app
 
-# Copiar arquivos de dependências primeiro (cache Docker)
-COPY --chown=appuser:appgroup pyproject.toml ./
+# CORREÇÃO: Copiar arquivos de dependências E README.md juntos (cache Docker mantido)
+COPY --chown=appuser:appgroup pyproject.toml README.md ./
 
 # Instalar UV e dependências
 RUN pip install uv && \
@@ -44,7 +44,6 @@ RUN pip install uv && \
 # Copiar código da aplicação
 COPY --chown=appuser:appgroup src/ ./src/
 COPY --chown=appuser:appgroup config/ ./config/
-COPY --chown=appuser:appgroup README.md ./
 
 # Criar diretórios necessários
 RUN mkdir -p logs cache temp uploads && \
