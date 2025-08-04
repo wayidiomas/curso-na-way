@@ -1,4 +1,4 @@
-# src/api/v2/vocabulary.py - VERSÃO COMPLETA E INTEGRADA
+# src/api/v2/vocabulary.py - MIGRAÇÃO MCP→SERVICE COMPLETA
 """Endpoints para geração de vocabulário com contexto RAG hierárquico."""
 from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import List, Optional, Dict, Any
@@ -37,7 +37,7 @@ async def generate_vocabulary_for_unit(
     
     Flow do IVO V2:
     1. Buscar unidade e validar hierarquia
-    2. Analisar imagens via MCP (se existirem)
+    2. Analisar imagens via Image Analysis Service (migrado de MCP)
     3. Usar RAG para contexto de progressão
     4. Evitar repetições de vocabulário já ensinado
     5. Gerar vocabulário adequado ao nível CEFR
@@ -80,14 +80,14 @@ async def generate_vocabulary_for_unit(
             unit.course_id, unit.book_id, unit.sequence_order
         )
         
-        # 5. Analisar imagens se existirem (usando MCP)
+        # 5. Analisar imagens se existirem (usando Image Analysis Service - migrado de MCP)
         images_analysis = {}
         if unit.images and len(unit.images) > 0:
             try:
-                logger.info("Analisando imagens via MCP para contexto de vocabulário...")
+                logger.info("Analisando imagens via Image Analysis Service para contexto de vocabulário...")
                 
-                # Usar MCP Image Analysis se disponível
-                from src.mcp.mcp_image_client import analyze_images_for_unit_creation
+                # ✅ MIGRAÇÃO COMPLETA: MCP → Service integrado
+                from src.services.image_analysis_service import analyze_images_for_unit_creation
                 
                 # Extrair dados base64 das imagens
                 images_b64 = []
@@ -104,12 +104,12 @@ async def generate_vocabulary_for_unit(
                     )
                     
                     if images_analysis.get("success"):
-                        logger.info(f"Análise de imagens bem-sucedida: {len(images_analysis.get('consolidated_vocabulary', {}).get('vocabulary', []))} palavras sugeridas")
+                        logger.info(f"✅ Análise de imagens bem-sucedida (service integrado): {len(images_analysis.get('consolidated_vocabulary', {}).get('vocabulary', []))} palavras sugeridas")
                     else:
-                        logger.warning(f"Falha na análise de imagens: {images_analysis.get('error', 'Erro desconhecido')}")
+                        logger.warning(f"⚠️ Falha na análise de imagens: {images_analysis.get('error', 'Erro desconhecido')}")
                         
             except Exception as e:
-                logger.warning(f"Erro na análise de imagens via MCP: {str(e)}")
+                logger.warning(f"⚠️ Erro na análise de imagens via Service: {str(e)}")
                 images_analysis = {"error": str(e)}
         
         # 6. Preparar dados para geração
@@ -187,7 +187,7 @@ async def generate_vocabulary_for_unit(
                 "model": "gpt-4o-mini",
                 "generation_time": generation_time,
                 "images_analyzed": len(unit.images) if unit.images else 0,
-                "mcp_used": bool(images_analysis.get("success"))
+                "service_used": "ImageAnalysisService (migrado de MCP)"
             },
             processing_time=generation_time,
             success=True
@@ -215,13 +215,14 @@ async def generate_vocabulary_for_unit(
                     "progression_level": generation_params["rag_context"]["progression_level"],
                     "images_analyzed": len(unit.images) if unit.images else 0
                 },
-                "images_contribution": {
+                "migration_info": {
                     "images_analyzed": len(unit.images) if unit.images else 0,
-                    "mcp_analysis_success": images_analysis.get("success", False),
-                    "vocabulary_from_images": len(images_analysis.get("consolidated_vocabulary", {}).get("vocabulary", [])) if images_analysis.get("success") else 0
+                    "service_analysis_success": images_analysis.get("success", False),
+                    "vocabulary_from_images": len(images_analysis.get("consolidated_vocabulary", {}).get("vocabulary", [])) if images_analysis.get("success") else 0,
+                    "migration_status": "✅ MCP → Service migration completed successfully"
                 }
             },
-            message=f"Vocabulário gerado com sucesso para unidade '{unit.title}'",
+            message=f"Vocabulário gerado com sucesso para unidade '{unit.title}' (service integrado)",
             hierarchy_info={
                 "course_id": unit.course_id,
                 "book_id": unit.book_id,

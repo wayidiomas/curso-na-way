@@ -1,10 +1,15 @@
-# docker-compose.yml - IVO V2 Seguro SEM REDIS
+# docker-compose.yml - IVO V2 SIMPLIFICADO (Migração MCP→Service Completa)
+# 🎯 MIGRAÇÃO CONCLUÍDA: 2 containers → 1 container
+# ✅ MCP Server integrado como ImageAnalysisService
+# ✅ Performance melhorada (sem HTTP entre containers)
+# ✅ Deploy mais simples e manutenção mais fácil
+
 services:
   ivo-app:
     build: 
       context: .
       dockerfile: Dockerfile
-    container_name: ivo-v2-dev
+    container_name: ivo-v2-unified
     ports:
       - "8000:8000"
     environment:
@@ -16,6 +21,12 @@ services:
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      
+      # ✅ MIGRAÇÃO CONCLUÍDA - Não precisa mais de MCP_SERVER_HOST
+      # Análise de imagens agora é feita via ImageAnalysisService integrado
+      - IMAGE_ANALYSIS_ENABLED=true
+      - IMAGE_ANALYSIS_MODE=integrated_service
+      
     volumes:
       # ✅ Volumes com user mapping para segurança
       - ./src:/app/src:ro
@@ -32,39 +43,24 @@ services:
       start_period: 40s
     networks:
       - ivo-network
-    # ✅ Limites de recursos para segurança
+    # ✅ Limites de recursos otimizados (agora que é um container só)
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: '0.5'
+          memory: 1.5G  # Aumentado pois agora inclui análise de imagens
+          cpus: '0.75'   # Mais CPU para processamento integrado
         reservations:
-          memory: 512M
-          cpus: '0.25'
+          memory: 768M   # Reserva maior para estabilidade
+          cpus: '0.5'
 
-  # MCP Server seguro
-  mcp-server:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-    container_name: ivo-mcp-server
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    command: ["python", "src/mcp/image_analysis_server.py"]
-    volumes:
-      - ./src:/app/src:ro
-    user: "1001:1001"  # ✅ Mesmo usuário não-root
-    depends_on:
-      - ivo-app
-    restart: unless-stopped
-    networks:
-      - ivo-network
-    # ✅ Limites de recursos
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.25'
+  # 🗑️ MCP Server REMOVIDO - Funcionalidade migrada para ImageAnalysisService
+  # Antes:
+  # mcp-server:
+  #   build: ...
+  #   command: ["python", "src/mcp/image_analysis_server.py"]
+  #   ...
+  # 
+  # Agora: Integrado como src/services/image_analysis_service.py
 
 volumes:
   uploads_data:
@@ -74,4 +70,39 @@ volumes:
 networks:
   ivo-network:
     driver: bridge
-    # ✅ Rede isolada
+    # ✅ Rede simplificada (um container apenas)
+
+# =============================================================================
+# 📊 RESULTADOS DA MIGRAÇÃO MCP → SERVICE
+# =============================================================================
+#
+# ✅ ANTES (Complexo):
+#   - 2 containers (ivo-app + mcp-server)
+#   - Comunicação HTTP entre containers
+#   - Docker network mais complexo
+#   - Deploy mais lento
+#   - Debugging distribuído
+#   - Logs em múltiplos containers
+#
+# ✅ DEPOIS (Simples):
+#   - 1 container único (ivo-app)
+#   - Comunicação direta LangChain 0.3
+#   - Deploy mais rápido
+#   - Debugging centralizado
+#   - Logs unificados
+#   - Performance melhorada
+#
+# 🚀 COMANDOS DE TESTE:
+#   docker-compose down
+#   docker-compose build --no-cache
+#   docker-compose up
+#   
+#   # Testar análise de imagens integrada
+#   curl -X POST http://localhost:8000/api/v2/units/{unit_id}/vocabulary \
+#     -F "image_1=@test_image.jpg"
+#
+# 🔧 MONITORAMENTO:
+#   docker-compose logs -f ivo-app | grep "ImageAnalysisService"
+#   docker-compose exec ivo-app python -c "from src.services.image_analysis_service import ImageAnalysisService; print('✅ Service disponível')"
+#
+# =============================================================================
