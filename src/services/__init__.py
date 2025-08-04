@@ -3,6 +3,10 @@
 IVO V2 - Intelligent Vocabulary Organizer Services Hub
 Centralização de todos os serviços do sistema hierárquico Course → Book → Unit.
 
+ATUALIZAÇÃO DE MIGRAÇÃO:
+✅ ADICIONADO: ImageAnalysisService (migrado de MCP)
+✅ FUNÇÃO DE COMPATIBILIDADE: analyze_images_for_unit_creation mantida
+
 Este módulo fornece acesso unificado a todos os serviços do IVO V2:
 - VocabularyGeneratorService: Geração de vocabulário com RAG e análise de imagens
 - SentencesGeneratorService: Geração de sentences conectadas ao vocabulário
@@ -14,6 +18,7 @@ Este módulo fornece acesso unificado a todos os serviços do IVO V2:
 - HierarchicalDatabaseService: Operações de banco com hierarquia
 - L1InterferenceAnalyzer: Análise de interferência português→inglês
 - PromptGeneratorService: Geração centralizada de prompts
+- ImageAnalysisService: Análise de imagens (MIGRADO DE MCP) ✅
 
 Arquitetura: LangChain 0.3 + Pydantic 2 + IA contextual + RAG hierárquico
 """
@@ -37,6 +42,9 @@ from .qa_generator import QAGeneratorService
 from .assessment_selector import AssessmentSelectorService
 from .aim_detector import AimDetectorService
 from .l1_interference import L1InterferenceAnalyzer
+
+# ✅ MIGRAÇÃO MCP → SERVICE: Import do novo service
+from .image_analysis_service import ImageAnalysisService, analyze_images_for_unit_creation
 
 # Serviços de Infraestrutura
 from .hierarchical_database import HierarchicalDatabaseService, hierarchical_db
@@ -108,7 +116,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# REGISTRY DE SERVIÇOS
+# REGISTRY DE SERVIÇOS (ATUALIZADO)
 # =============================================================================
 
 class ServiceRegistry:
@@ -125,7 +133,7 @@ class ServiceRegistry:
             return
             
         try:
-            logger.info("🚀 Inicializando IVO V2 Services Hub...")
+            logger.info("🚀 Inicializando IVO V2 Services Hub (incluindo ImageAnalysisService migrado)...")
             
             # Inicializar serviços principais
             self._services = {
@@ -141,6 +149,9 @@ class ServiceRegistry:
                 "aims": AimDetectorService(),
                 "l1_interference": L1InterferenceAnalyzer(),
                 
+                # ✅ MIGRAÇÃO: Adicionar ImageAnalysisService
+                "image_analysis": ImageAnalysisService(),
+                
                 # Infraestrutura
                 "database": hierarchical_db,  # Instância global já inicializada
                 "prompts": PromptGeneratorService()
@@ -148,7 +159,9 @@ class ServiceRegistry:
             
             self._initialized = True
             
+            # ✅ Log de confirmação da migração
             logger.info(f"✅ IVO V2 Services Hub inicializado com {len(self._services)} serviços")
+            logger.info("🔄 MIGRAÇÃO CONCLUÍDA: ImageAnalysisService integrado (anteriormente MCP)")
             
         except Exception as e:
             logger.error(f"❌ Erro na inicialização dos serviços: {str(e)}")
@@ -199,7 +212,12 @@ class ServiceRegistry:
             "hub_status": "active",
             "total_services": len(self._services),
             "initialized_at": datetime.now().isoformat(),
-            "services": services_status
+            "services": services_status,
+            "migration_info": {
+                "mcp_to_service_migration": "completed",
+                "image_analysis_service": "integrated",
+                "backward_compatibility": "maintained"
+            }
         }
 
 
@@ -208,7 +226,7 @@ service_registry = ServiceRegistry()
 
 
 # =============================================================================
-# FUNÇÕES DE CONVENIÊNCIA PARA ACESSO DIRETO
+# FUNÇÕES DE CONVENIÊNCIA PARA ACESSO DIRETO (ATUALIZADO)
 # =============================================================================
 
 async def get_vocabulary_service() -> VocabularyGeneratorService:
@@ -251,6 +269,12 @@ async def get_l1_service() -> L1InterferenceAnalyzer:
     await service_registry.initialize_services()
     return service_registry.get_service("l1_interference")
 
+# ✅ NOVA FUNÇÃO: Acesso ao service de análise de imagens
+async def get_image_analysis_service() -> ImageAnalysisService:
+    """Obter serviço de análise de imagens (migrado de MCP)."""
+    await service_registry.initialize_services()
+    return service_registry.get_service("image_analysis")
+
 async def get_database_service() -> HierarchicalDatabaseService:
     """Obter serviço de banco hierárquico."""
     await service_registry.initialize_services()
@@ -263,7 +287,7 @@ async def get_prompts_service() -> PromptGeneratorService:
 
 
 # =============================================================================
-# PIPELINE DE GERAÇÃO HIERÁRQUICA
+# PIPELINE DE GERAÇÃO HIERÁRQUICA (SEM MUDANÇAS)
 # =============================================================================
 
 class ContentGenerationPipeline:
@@ -284,6 +308,8 @@ class ContentGenerationPipeline:
         Gerar conteúdo completo de uma unidade seguindo o pipeline IVO V2.
         
         Pipeline: Aims → Vocabulary → Sentences → Tips/Grammar → Assessments → QA
+        
+        ✅ MIGRAÇÃO: images_analysis agora usa ImageAnalysisService integrado
         """
         await self.services.initialize_services()
         
@@ -305,7 +331,10 @@ class ContentGenerationPipeline:
             "generation_order": [],
             "generation_time": {},
             "success": True,
-            "errors": []
+            "errors": [],
+            "migration_notes": {
+                "image_analysis": "Now using integrated ImageAnalysisService (migrated from MCP)"
+            }
         }
         
         try:
@@ -469,7 +498,7 @@ content_pipeline = ContentGenerationPipeline()
 
 
 # =============================================================================
-# FUNÇÕES DE CONVENIÊNCIA PARA PIPELINE
+# FUNÇÕES DE CONVENIÊNCIA PARA PIPELINE (ATUALIZADO)
 # =============================================================================
 
 async def generate_complete_unit(
@@ -524,9 +553,23 @@ async def generate_sentences_only(
     sentences_content = await sentences_service.generate_sentences_for_unit(sentences_params)
     return {"sentences": sentences_content.dict()}
 
+# ✅ NOVA FUNÇÃO: Análise de imagens integrada
+async def analyze_images_only(
+    image_files_b64: List[str],
+    context: str,
+    cefr_level: str = "A2",
+    unit_type: str = "lexical_unit"
+) -> Dict[str, Any]:
+    """Função de conveniência para análise de imagens usando service integrado."""
+    image_service = await get_image_analysis_service()
+    
+    return await image_service.analyze_images_for_vocabulary(
+        image_files_b64, context, cefr_level, unit_type
+    )
+
 
 # =============================================================================
-# STATUS E INFORMAÇÕES DO HUB
+# STATUS E INFORMAÇÕES DO HUB (ATUALIZADO)
 # =============================================================================
 
 async def get_services_hub_status() -> Dict[str, Any]:
@@ -540,16 +583,17 @@ async def initialize_all_services() -> None:
 def get_available_services() -> List[str]:
     """Obter lista de serviços disponíveis."""
     return [
-        "vocabulary",     # VocabularyGeneratorService
-        "sentences",      # SentencesGeneratorService
-        "tips",          # TipsGeneratorService
-        "grammar",       # GrammarGenerator
-        "qa",            # QAGeneratorService
-        "assessments",   # AssessmentSelectorService
-        "aims",          # AimDetectorService
-        "l1_interference", # L1InterferenceAnalyzer
-        "database",      # HierarchicalDatabaseService
-        "prompts"        # PromptGeneratorService
+        "vocabulary",        # VocabularyGeneratorService
+        "sentences",         # SentencesGeneratorService
+        "tips",             # TipsGeneratorService
+        "grammar",          # GrammarGenerator
+        "qa",               # QAGeneratorService
+        "assessments",      # AssessmentSelectorService
+        "aims",             # AimDetectorService
+        "l1_interference",  # L1InterferenceAnalyzer
+        "image_analysis",   # ImageAnalysisService ✅ NOVO
+        "database",         # HierarchicalDatabaseService
+        "prompts"           # PromptGeneratorService
     ]
 
 def get_pipeline_steps() -> List[str]:
@@ -565,7 +609,7 @@ def get_pipeline_steps() -> List[str]:
 
 
 # =============================================================================
-# EXPORTS PRINCIPAIS
+# EXPORTS PRINCIPAIS (ATUALIZADO)
 # =============================================================================
 
 __all__ = [
@@ -580,6 +624,7 @@ __all__ = [
     "L1InterferenceAnalyzer",
     "HierarchicalDatabaseService",
     "PromptGeneratorService",
+    "ImageAnalysisService",  # ✅ ADICIONADO
     
     # Registry e Pipeline
     "ServiceRegistry",
@@ -598,11 +643,13 @@ __all__ = [
     "get_l1_service",
     "get_database_service",
     "get_prompts_service",
+    "get_image_analysis_service",  # ✅ ADICIONADO
     
     # Pipeline Functions
     "generate_complete_unit",
     "generate_vocabulary_only",
     "generate_sentences_only",
+    "analyze_images_only",  # ✅ ADICIONADO
     
     # Utility Functions
     "get_services_hub_status",
@@ -612,6 +659,9 @@ __all__ = [
     
     # Instância Global do Database
     "hierarchical_db",
+    
+    # ✅ FUNÇÃO DE COMPATIBILIDADE MANTIDA
+    "analyze_images_for_unit_creation",
     
     # Utils Re-exports
     "generate_sentences_for_unit_creation",
@@ -644,10 +694,12 @@ __all__ = [
 
 
 # =============================================================================
-# INICIALIZAÇÃO AUTOMÁTICA
+# INICIALIZAÇÃO AUTOMÁTICA (ATUALIZADO)
 # =============================================================================
 
 logger.info("📦 IVO V2 Services Hub carregado - todos os serviços disponíveis")
 logger.info(f"🔧 Serviços disponíveis: {', '.join(get_available_services())}")
 logger.info(f"🚀 Pipeline steps: {' → '.join(get_pipeline_steps())}")
+logger.info("🔄 MIGRAÇÃO MCP→SERVICE: ImageAnalysisService integrado com sucesso")
+logger.info("✅ COMPATIBILIDADE: analyze_images_for_unit_creation() mantida")
 logger.info("💡 Use initialize_all_services() para inicializar ou acesse serviços individuais via get_*_service()")
