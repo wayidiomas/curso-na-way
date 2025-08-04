@@ -633,11 +633,6 @@ Generate the JSON structure now:"""
         except Exception as e:
             logger.warning(f"Erro no enriquecimento fonético via IA: {str(e)}")
             
-            # Fallback técnico
-            fallback_complementary = [s for s in TIPS_STRATEGIES if s != selected_strategy and used_strategies.count(s) < 2]
-            enriched_tips["complementary_strategies"] = fallback_complementary[:3]
-            
-            return enriched_tips
 
     async def _generate_selection_rationale_ai(
         self, 
