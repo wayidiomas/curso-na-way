@@ -891,6 +891,256 @@ def validate_ipa_consistency(vocabulary_items: List[VocabularyItem]) -> Dict[str
         "stress_patterns_used": list(unique_patterns)
     }
 
+# =============================================================================
+# L1 INTERFERENCE PATTERN MODEL - ADICIONAR AO FINAL DE unit_models.py
+# =============================================================================
+
+class L1InterferencePattern(BaseModel):
+    """Modelo para padrões de interferência L1→L2 (português→inglês)."""
+    pattern_type: str = Field(..., description="Tipo de padrão de interferência")
+    portuguese_structure: str = Field(..., description="Estrutura em português")
+    incorrect_english: str = Field(..., description="Inglês incorreto (interferência)")
+    correct_english: str = Field(..., description="Inglês correto")
+    explanation: str = Field(..., description="Explicação da interferência")
+    prevention_strategy: str = Field(..., description="Estratégia de prevenção")
+    examples: List[str] = Field(default=[], description="Exemplos adicionais")
+    difficulty_level: str = Field(default="intermediate", description="Nível de dificuldade")
+    
+    # Validações específicas
+    @validator('pattern_type')
+    def validate_pattern_type(cls, v):
+        """Validar tipo de padrão."""
+        valid_types = {
+            "grammatical", "lexical", "phonetic", "semantic", 
+            "syntactic", "cultural", "pragmatic"
+        }
+        
+        if v.lower() not in valid_types:
+            raise ValueError(f"Tipo de padrão deve ser um de: {', '.join(valid_types)}")
+        
+        return v.lower()
+    
+    @validator('difficulty_level')
+    def validate_difficulty_level(cls, v):
+        """Validar nível de dificuldade."""
+        valid_levels = {"beginner", "elementary", "intermediate", "upper_intermediate", "advanced"}
+        
+        if v.lower() not in valid_levels:
+            raise ValueError(f"Nível de dificuldade deve ser um de: {', '.join(valid_levels)}")
+        
+        return v.lower()
+    
+    @validator('prevention_strategy')
+    def validate_prevention_strategy(cls, v):
+        """Validar estratégia de prevenção."""
+        valid_strategies = {
+            "contrastive_exercises", "awareness_raising", "drilling", 
+            "error_correction", "explicit_instruction", "input_enhancement",
+            "consciousness_raising", "form_focused_instruction"
+        }
+        
+        if v.lower() not in valid_strategies:
+            raise ValueError(f"Estratégia deve ser uma de: {', '.join(valid_strategies)}")
+        
+        return v.lower()
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "pattern_type": "grammatical",
+                "portuguese_structure": "Eu tenho 25 anos",
+                "incorrect_english": "I have 25 years",
+                "correct_english": "I am 25 years old",
+                "explanation": "Portuguese uses 'ter' (have) for age, English uses 'be'",
+                "prevention_strategy": "contrastive_exercises",
+                "examples": [
+                    "I am 30 years old",
+                    "She is 25 years old",
+                    "How old are you? (not: How many years do you have?)"
+                ],
+                "difficulty_level": "beginner"
+            }
+        }
+
+
+class L1InterferenceAnalysis(BaseModel):
+    """Análise completa de interferência L1→L2."""
+    grammar_point: str = Field(..., description="Ponto gramatical analisado")
+    vocabulary_items: List[str] = Field(..., description="Itens de vocabulário analisados")
+    cefr_level: str = Field(..., description="Nível CEFR do conteúdo")
+    
+    identified_patterns: List[L1InterferencePattern] = Field(..., description="Padrões identificados")
+    prevention_strategies: List[str] = Field(..., description="Estratégias de prevenção gerais")
+    common_mistakes: List[str] = Field(..., description="Erros comuns identificados")
+    preventive_exercises: List[Dict[str, Any]] = Field(..., description="Exercícios preventivos sugeridos")
+    
+    # Métricas de análise
+    interference_risk_score: float = Field(..., ge=0.0, le=1.0, description="Score de risco de interferência")
+    patterns_count: int = Field(..., ge=0, description="Número de padrões identificados")
+    coverage_areas: List[str] = Field(..., description="Áreas de interferência cobertas")
+    
+    generated_at: datetime = Field(default_factory=datetime.now)
+    
+    @validator('interference_risk_score')
+    def validate_risk_score(cls, v):
+        """Validar score de risco."""
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("Score de risco deve estar entre 0.0 e 1.0")
+        return v
+    
+    @validator('patterns_count')
+    def validate_patterns_count(cls, v, values):
+        """Validar contagem de padrões."""
+        patterns = values.get('identified_patterns', [])
+        if v != len(patterns):
+            return len(patterns)
+        return v
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "grammar_point": "Age expressions",
+                "vocabulary_items": ["age", "years", "old", "young"],
+                "cefr_level": "A1",
+                "identified_patterns": [
+                    {
+                        "pattern_type": "grammatical",
+                        "portuguese_structure": "Eu tenho X anos",
+                        "incorrect_english": "I have X years",
+                        "correct_english": "I am X years old",
+                        "explanation": "Age structure difference PT vs EN",
+                        "prevention_strategy": "contrastive_exercises"
+                    }
+                ],
+                "prevention_strategies": [
+                    "Contrast exercises Portuguese vs English",
+                    "Explicit instruction on BE vs HAVE",
+                    "Drilling with age expressions"
+                ],
+                "common_mistakes": [
+                    "Using HAVE instead of BE for age",
+                    "Literal translation from Portuguese",
+                    "Missing 'old' in age expressions"
+                ],
+                "preventive_exercises": [
+                    {
+                        "type": "contrast_exercise",
+                        "description": "Compare PT and EN age expressions",
+                        "examples": ["PT: Tenho 20 anos → EN: I am 20 years old"]
+                    }
+                ],
+                "interference_risk_score": 0.8,
+                "patterns_count": 1,
+                "coverage_areas": ["grammatical_structure", "verb_usage"]
+            }
+        }
+
+
+# =============================================================================
+# UTILIDADES PARA L1 INTERFERENCE
+# =============================================================================
+
+def create_l1_interference_pattern(
+    pattern_type: str,
+    portuguese_structure: str,
+    incorrect_english: str,
+    correct_english: str,
+    explanation: str,
+    prevention_strategy: str = "contrastive_exercises",
+    examples: List[str] = None,
+    difficulty_level: str = "intermediate"
+) -> L1InterferencePattern:
+    """Criar um padrão de interferência L1→L2."""
+    return L1InterferencePattern(
+        pattern_type=pattern_type,
+        portuguese_structure=portuguese_structure,
+        incorrect_english=incorrect_english,
+        correct_english=correct_english,
+        explanation=explanation,
+        prevention_strategy=prevention_strategy,
+        examples=examples or [],
+        difficulty_level=difficulty_level
+    )
+
+
+def get_common_l1_interference_patterns() -> List[L1InterferencePattern]:
+    """Retornar padrões comuns de interferência para brasileiros."""
+    return [
+        L1InterferencePattern(
+            pattern_type="grammatical",
+            portuguese_structure="Eu tenho 25 anos",
+            incorrect_english="I have 25 years",
+            correct_english="I am 25 years old",
+            explanation="Portuguese uses 'ter' (have) for age, English uses 'be'",
+            prevention_strategy="contrastive_exercises",
+            examples=["I am 30 years old", "She is 25 years old"],
+            difficulty_level="beginner"
+        ),
+        L1InterferencePattern(
+            pattern_type="lexical",
+            portuguese_structure="Eu estou com fome",
+            incorrect_english="I am with hunger",
+            correct_english="I am hungry",
+            explanation="Portuguese uses 'estar com + noun', English uses 'be + adjective'",
+            prevention_strategy="explicit_instruction",
+            examples=["I am thirsty", "I am tired", "I am cold"],
+            difficulty_level="beginner"
+        ),
+        L1InterferencePattern(
+            pattern_type="grammatical",
+            portuguese_structure="A Maria é mais alta que a Ana",
+            incorrect_english="Maria is more tall than Ana",
+            correct_english="Maria is taller than Ana",
+            explanation="Portuguese always uses 'mais + adjective', English has irregular comparatives",
+            prevention_strategy="drilling",
+            examples=["bigger (not more big)", "better (not more good)"],
+            difficulty_level="elementary"
+        ),
+        L1InterferencePattern(
+            pattern_type="phonetic",
+            portuguese_structure="Hospital [hos-pi-TAL]",
+            incorrect_english="Hospital [hos-pi-TAL]",
+            correct_english="Hospital [HOS-pi-tal]",
+            explanation="Portuguese stress on final syllable, English on first",
+            prevention_strategy="awareness_raising",
+            examples=["Hotel [ho-TEL] vs [ho-TEL]", "Animal [a-ni-MAL] vs [AN-i-mal]"],
+            difficulty_level="intermediate"
+        ),
+        L1InterferencePattern(
+            pattern_type="semantic",
+            portuguese_structure="Pretender fazer algo",
+            incorrect_english="I pretend to do something",
+            correct_english="I intend to do something",
+            explanation="Portuguese 'pretender' = English 'intend', not 'pretend'",
+            prevention_strategy="consciousness_raising",
+            examples=["I intend to study", "I plan to travel"],
+            difficulty_level="intermediate"
+        )
+    ]
+
+
+def analyze_text_for_l1_interference(text: str, cefr_level: str) -> List[str]:
+    """Analisar texto para possíveis interferências L1."""
+    common_patterns = get_common_l1_interference_patterns()
+    potential_issues = []
+    
+    text_lower = text.lower()
+    
+    # Verificar padrões conhecidos
+    interference_indicators = {
+        "have + number + years": "Age expression with HAVE instead of BE",
+        "more + adjective": "Comparative with MORE instead of -ER",
+        "with + emotion noun": "Emotion expression with WITH instead of adjective",
+        "pretend + to": "False friend: pretend vs intend"
+    }
+    
+    for pattern, issue in interference_indicators.items():
+        # Verificação simplificada - na prática seria mais sofisticada
+        if any(word in text_lower for word in pattern.split(" + ")):
+            potential_issues.append(issue)
+    
+    return potential_issues
+
 
 # =============================================================================
 # FORWARD REFERENCES FIX

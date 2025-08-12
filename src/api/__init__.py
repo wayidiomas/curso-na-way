@@ -6,6 +6,7 @@ Centraliza todos os routers e configurações da API com imports condicionais ro
 Arquitetura hierárquica: Course → Book → Unit → Content
 """
 
+import importlib
 import logging
 from typing import Dict, Any, Optional
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 __version__ = "2.0.0"
 
 # =============================================================================
-# IMPORTS CONDICIONAIS COM TRATAMENTO DE ERRO
+# IMPORTS CONDICIONAIS COM TRATAMENTO DE ERRO - CORRIGIDO
 # =============================================================================
 
 # Health router (prioridade alta)
@@ -39,10 +40,12 @@ EXPECTED_V2_MODULES = [
     "sentences", "tips", "grammar", "assessments", "qa"
 ]
 
-# Import cada módulo V2 individualmente
+# Import cada módulo V2 individualmente - VERSÃO CORRIGIDA
 for module_name in EXPECTED_V2_MODULES:
     try:
-        module = __import__(f".v2.{module_name}", fromlist=[module_name], package=__name__)
+        # CORREÇÃO: Usar importlib.import_module sem parâmetro package inválido
+        module = importlib.import_module(f"src.api.v2.{module_name}")
+        
         if hasattr(module, 'router'):
             v2_modules[module_name] = module
             v2_availability[module_name] = True

@@ -166,19 +166,24 @@ def validate_package_integrity() -> Dict[str, Any]:
         module_status["api_v2"]["available"]
     ])
     
+    # CORREÇÃO: Verificar se info é dict antes de acessar como subscriptable
+    missing_critical_modules = []
+    optional_modules_missing = []
+    
+    for name, info in module_status.items():
+        
+        if isinstance(info, dict) and info.get("critical") and not info.get("available"):
+            missing_critical_modules.append(name)
+        elif isinstance(info, dict) and not info.get("critical") and not info.get("available"):
+            optional_modules_missing.append(name)
+    
     return {
         "package_valid": critical_modules_ok,
         "version": __version__,
         "architecture": __architecture__,
         "module_status": module_status,
-        "missing_critical_modules": [
-            name for name, info in module_status.items() 
-            if info["critical"] and not info["available"]
-        ],
-        "optional_modules_missing": [
-            name for name, info in module_status.items()
-            if not info["critical"] and not info["available"]
-        ]
+        "missing_critical_modules": missing_critical_modules,
+        "optional_modules_missing": optional_modules_missing
     }
 
 # =============================================================================
