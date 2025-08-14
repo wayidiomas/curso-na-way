@@ -626,6 +626,175 @@ async def generate_grammar(
     grammar_content = await generator.generate_grammar_content(request)
     return generator.format_for_output(grammar_content)
 
+# =============================================================================
+# GRAMMAR GENERATOR SERVICE - CLASSE FALTANTE
+# =============================================================================
+
+class GrammarGeneratorService:
+    """
+    Service wrapper para GrammarGenerator - compatibilidade com sistema IVO V2.
+    Esta classe fornece interface compatível esperada pelo sistema.
+    """
+    
+    def __init__(self):
+        """Inicializar service com generator interno."""
+        self.generator = GrammarGenerator()
+        logger.info("✅ GrammarGeneratorService inicializado")
+    
+    async def generate_grammar_content(
+        self, 
+        request: GrammarRequest
+    ) -> GrammarContent:
+        """
+        Interface principal para geração de gramática.
+        
+        Args:
+            request: Dados da requisição validados pelo Pydantic 2
+            
+        Returns:
+            GrammarContent: Conteúdo estruturado por estratégia
+        """
+        return await self.generator.generate_grammar_content(request)
+    
+    async def generate_grammar_for_unit(
+        self,
+        unit_data: Dict[str, Any],
+        vocabulary_items: List[str],
+        context: str = "",
+        strategy: str = "systematic"
+    ) -> Dict[str, Any]:
+        """
+        Gerar gramática para uma unidade específica.
+        Interface compatível com sistema hierárquico IVO V2.
+        
+        Args:
+            unit_data: Dados da unidade
+            vocabulary_items: Vocabulário da unidade
+            context: Contexto da unidade
+            strategy: Estratégia gramatical
+            
+        Returns:
+            Dict: Conteúdo gramatical formatado para unidade
+        """
+        try:
+            # Extrair informações da unidade
+            level = unit_data.get("cefr_level", "B1")
+            variant = unit_data.get("language_variant", "american_english").replace("_english", "")
+            unit_context = context or unit_data.get("context", "")
+            
+            # Texto base da unidade
+            text_sources = []
+            if unit_data.get("main_aim"):
+                text_sources.append(unit_data["main_aim"])
+            if unit_data.get("subsidiary_aims"):
+                text_sources.extend(unit_data["subsidiary_aims"])
+            if unit_context:
+                text_sources.append(unit_context)
+            
+            input_text = ". ".join(text_sources) or "Grammar practice with available vocabulary."
+            
+            # Criar request
+            request = GrammarRequest(
+                input_text=input_text,
+                vocabulary_list=vocabulary_items,
+                level=level,
+                variant=variant,
+                unit_context=unit_context,
+                strategy=strategy
+            )
+            
+            # Gerar conteúdo
+            grammar_content = await self.generator.generate_grammar_content(request)
+            
+            # Formatar para saída do sistema
+            formatted_content = self.generator.format_for_output(grammar_content)
+            
+            # Adicionar metadados específicos da unidade
+            formatted_content["unit_integration"] = {
+                "unit_id": unit_data.get("id"),
+                "vocabulary_used": vocabulary_items[:10],
+                "context_applied": unit_context,
+                "strategy_applied": strategy,
+                "level_targeted": level
+            }
+            
+            logger.info(f"✅ Gramática gerada para unidade: {grammar_content.grammar_point}")
+            return formatted_content
+            
+        except Exception as e:
+            logger.error(f"❌ Erro na geração de gramática para unidade: {str(e)}")
+            raise
+    
+    def get_available_strategies(self) -> List[str]:
+        """Retornar estratégias disponíveis."""
+        return list(GRAMMAR_STRATEGIES.keys())
+    
+    async def get_service_status(self) -> Dict[str, Any]:
+        """Status do service."""
+        generator_status = await self.generator.get_service_status()
+        return {
+            **generator_status,
+            "service_name": "GrammarGeneratorService",
+            "wrapper_status": "active",
+            "ivo_v2_compatible": True
+        }
+    
+    async def validate_grammar_request(self, request_data: Dict[str, Any]) -> bool:
+        """Validar dados de requisição."""
+        try:
+            GrammarRequest(**request_data)
+            return True
+        except ValidationError:
+            return False
+
+
+# =============================================================================
+# INSTÂNCIA GLOBAL PARA COMPATIBILIDADE
+# =============================================================================
+
+# Instância global que será importada pelo sistema
+grammar_service = GrammarGeneratorService()
+
+
+# =============================================================================
+# FUNÇÃO DE CONVENIÊNCIA PARA INTEGRAÇÃO
+# =============================================================================
+
+async def create_grammar_for_unit(
+    unit_data: Dict[str, Any],
+    vocabulary_items: List[str] = None,
+    context: str = "",
+    strategy: str = "systematic"
+) -> Dict[str, Any]:
+    """
+    Função de conveniência para integração com sistema IVO V2.
+    
+    Args:
+        unit_data: Dados completos da unidade
+        vocabulary_items: Lista de vocabulário (opcional)
+        context: Contexto adicional
+        strategy: "systematic" ou "l1_prevention"
+        
+    Returns:
+        Dict: Conteúdo gramatical pronto para uso
+    """
+    service = GrammarGeneratorService()
+    
+    # Usar vocabulário da unidade se não fornecido
+    if vocabulary_items is None:
+        vocabulary_section = unit_data.get("vocabulary", {})
+        if isinstance(vocabulary_section, dict):
+            items = vocabulary_section.get("items", [])
+            vocabulary_items = [item.get("word", "") for item in items if isinstance(item, dict)]
+        else:
+            vocabulary_items = []
+    
+    return await service.generate_grammar_for_unit(
+        unit_data=unit_data,
+        vocabulary_items=vocabulary_items,
+        context=context,
+        strategy=strategy
+    )
 
 # Exemplo e teste para LangChain 0.3 + IA Contextual
 if __name__ == "__main__":

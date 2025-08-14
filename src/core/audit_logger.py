@@ -45,6 +45,7 @@ class AuditEventType(str, Enum):
     UNIT_CREATED = "unit_created"
     UNIT_VIEWED = "unit_viewed"
     UNIT_UPDATED = "unit_updated"
+    UNIT_DELETED = "unit_deleted"  # ← ADICIONADO: valor que estava faltando
     UNIT_STATUS_CHANGED = "unit_status_changed"
     UNIT_CONTEXT_ACCESSED = "unit_context_accessed"
     UNIT_CONTENT_GENERATED = "unit_content_generated"
