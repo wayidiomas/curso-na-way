@@ -1,5 +1,6 @@
 """Health check endpoints - Atualizado para IVO V2 sem Redis."""
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from datetime import datetime
 import os
@@ -19,6 +20,14 @@ class HealthResponse(BaseModel):
     services: Dict[str, str]
     system_info: Dict[str, Any]
     ivo_components: Dict[str, str]
+
+
+class DetailedHealthResponse(BaseModel):
+    """Response model para health check detalhado."""
+    overall_status: str
+    timestamp: str
+    diagnostics: Dict[str, Any]
+    recommendations: List[str]
 
 
 @router.get("/", response_model=HealthResponse)
@@ -202,7 +211,7 @@ async def health_check():
     )
 
 
-@router.get("/detailed", response_model=dict)
+@router.get("/detailed", response_model=DetailedHealthResponse)
 async def detailed_health_check():
     """Health check detalhado com diagnósticos específicos do IVO V2."""
     diagnostics = {}
@@ -319,12 +328,13 @@ async def detailed_health_check():
         for diag in diagnostics.values()
     )
     
-    return {
-        "overall_status": "healthy" if all_healthy else "degraded",
-        "timestamp": datetime.now().isoformat(),
-        "diagnostics": diagnostics,
-        "recommendations": _generate_health_recommendations(diagnostics)
-    }
+    # ✅ CORREÇÃO: Retornar objeto DetailedHealthResponse em vez de dict
+    return DetailedHealthResponse(
+        overall_status="healthy" if all_healthy else "degraded",
+        timestamp=datetime.now().isoformat(),
+        diagnostics=diagnostics,
+        recommendations=_generate_health_recommendations(diagnostics)
+    )
 
 
 def _generate_health_recommendations(diagnostics: Dict[str, Any]) -> List[str]:
@@ -349,3 +359,34 @@ def _generate_health_recommendations(diagnostics: Dict[str, Any]) -> List[str]:
         recommendations.append("Sistema funcionando corretamente - pronto para geração de conteúdo")
     
     return recommendations
+
+
+# ✅ ALTERNATIVA: Endpoint adicional usando JSONResponse diretamente
+@router.get("/detailed-json")
+async def detailed_health_check_json():
+    """Health check detalhado retornando JSONResponse diretamente."""
+    try:
+        # Reusar lógica do endpoint principal
+        detailed_response = await detailed_health_check()
+        
+        # Converter para dict e retornar como JSONResponse
+        response_dict = {
+            "overall_status": detailed_response.overall_status,
+            "timestamp": detailed_response.timestamp,
+            "diagnostics": detailed_response.diagnostics,
+            "recommendations": detailed_response.recommendations
+        }
+        
+        return JSONResponse(content=response_dict)
+        
+    except Exception as e:
+        logger.error(f"Erro no health check detalhado: {str(e)}")
+        return JSONResponse(
+            content={
+                "overall_status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e),
+                "recommendations": ["Verificar logs do sistema"]
+            },
+            status_code=500
+        )

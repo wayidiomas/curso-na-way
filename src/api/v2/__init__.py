@@ -82,7 +82,7 @@ except ImportError as e:
     print(f"⚠️ qa module not available: {e}")
 
 try:
-    from . import health
+    from .. import health  # ← CORRETO: health está em api/, não em api/v2/
     HEALTH_AVAILABLE = True
 except ImportError as e:
     health = None
