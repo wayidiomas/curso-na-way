@@ -2,7 +2,7 @@
 """Sistema de paginação para endpoints hierárquicos."""
 
 from typing import List, Optional, Dict, Any, Generic, TypeVar
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator  # ← MUDANÇA: field_validator em vez de validator
 from math import ceil
 import logging
 
@@ -16,13 +16,15 @@ class PaginationParams(BaseModel):
     page: int = Field(1, ge=1, description="Número da página (inicia em 1)")
     size: int = Field(20, ge=1, le=100, description="Itens por página (máx 100)")
     
-    @validator('page')
+    @field_validator('page')  # ← MUDANÇA: @field_validator em vez de @validator
+    @classmethod
     def validate_page(cls, v):
         if v < 1:
             raise ValueError("Página deve ser >= 1")
         return v
     
-    @validator('size')
+    @field_validator('size')  # ← MUDANÇA: @field_validator em vez de @validator
+    @classmethod
     def validate_size(cls, v):
         if v < 1:
             raise ValueError("Size deve ser >= 1")
@@ -90,9 +92,10 @@ class PaginatedResponse(BaseModel, Generic[T]):
 class SortParams(BaseModel):
     """Parâmetros de ordenação."""
     sort_by: str = Field("created_at", description="Campo para ordenação")
-    sort_order: str = Field("desc", regex="^(asc|desc)$", description="Ordem (asc/desc)")
+    sort_order: str = Field("desc", pattern="^(asc|desc)$", description="Ordem (asc/desc)")  # ← MUDANÇA: pattern em vez de regex
     
-    @validator('sort_order')
+    @field_validator('sort_order')  # ← MUDANÇA: @field_validator em vez de @validator
+    @classmethod
     def validate_sort_order(cls, v):
         if v.lower() not in ['asc', 'desc']:
             raise ValueError("sort_order deve ser 'asc' ou 'desc'")
@@ -112,7 +115,7 @@ class FilterParams(BaseModel):
     
     def to_dict(self, exclude_none: bool = True) -> Dict[str, Any]:
         """Converter para dicionário."""
-        data = self.dict(exclude_none=exclude_none)
+        data = self.model_dump(exclude_none=exclude_none)  # ← MUDANÇA: model_dump em vez de dict
         return {k: v for k, v in data.items() if v is not None} if exclude_none else data
 
 
