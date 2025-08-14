@@ -1,7 +1,7 @@
-# src/core/unit_models.py - ATUALIZADO COM VALIDAÇÃO IPA E MELHORIAS
+# src/core/unit_models.py - ATUALIZADO PARA PYDANTIC V2 COMPLETO
 """Modelos específicos para o sistema IVO V2 com hierarquia Course → Book → Unit."""
 from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, ValidationInfo
 from datetime import datetime
 from fastapi import UploadFile
 import re
@@ -14,7 +14,7 @@ from .enums import (
 
 
 # =============================================================================
-# INPUT MODELS (Form Data) - ATUALIZADOS COM HIERARQUIA
+# INPUT MODELS (Form Data) - ATUALIZADOS COM HIERARQUIA E PYDANTIC V2
 # =============================================================================
 
 class UnitCreateRequest(BaseModel):
@@ -29,20 +29,22 @@ class UnitCreateRequest(BaseModel):
     language_variant: LanguageVariant = Field(..., description="Variante do idioma")
     unit_type: UnitType = Field(..., description="Tipo de unidade (lexical ou grammar)")
     
-    @validator('book_id')
-    def validate_book_not_empty(cls, v):
+    @field_validator('book_id')
+    @classmethod
+    def validate_book_not_empty(cls, v: str) -> str:
         if not v or v.strip() == "":
             raise ValueError("book_id é obrigatório")
         return v
     
-    @validator('course_id')
-    def validate_course_not_empty(cls, v):
+    @field_validator('course_id')
+    @classmethod
+    def validate_course_not_empty(cls, v: str) -> str:
         if not v or v.strip() == "":
             raise ValueError("course_id é obrigatório")
         return v
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "course_id": "course_english_beginners",
                 "book_id": "book_foundation_a1",
@@ -52,14 +54,15 @@ class UnitCreateRequest(BaseModel):
                 "unit_type": "lexical_unit"
             }
         }
+    }
 
 
 # =============================================================================
-# VOCABULARY MODELS - ATUALIZADO COM VALIDAÇÃO IPA COMPLETA
+# VOCABULARY MODELS - ATUALIZADO COM VALIDAÇÃO IPA COMPLETA E PYDANTIC V2
 # =============================================================================
 
 class VocabularyItem(BaseModel):
-    """Item de vocabulário com fonema IPA validado - VERSÃO COMPLETA."""
+    """Item de vocabulário com fonema IPA validado - VERSÃO COMPLETA PYDANTIC V2."""
     word: str = Field(..., min_length=1, max_length=50, description="Palavra no idioma alvo")
     phoneme: str = Field(..., description="Transcrição fonética IPA válida")
     definition: str = Field(..., min_length=5, max_length=200, description="Definição em português")
@@ -78,8 +81,9 @@ class VocabularyItem(BaseModel):
     syllable_count: Optional[int] = Field(None, ge=1, le=8, description="Número de sílabas")
     alternative_pronunciations: List[str] = Field(default=[], description="Pronúncias alternativas")
     
-    @validator('phoneme')
-    def validate_ipa_phoneme(cls, v):
+    @field_validator('phoneme')
+    @classmethod
+    def validate_ipa_phoneme(cls, v: str) -> str:
         """Validar que o fonema usa símbolos IPA válidos."""
         if not v:
             raise ValueError("Fonema é obrigatório")
@@ -123,8 +127,9 @@ class VocabularyItem(BaseModel):
         
         return v
     
-    @validator('word')
-    def validate_word_format(cls, v):
+    @field_validator('word')
+    @classmethod
+    def validate_word_format(cls, v: str) -> str:
         """Validar formato da palavra."""
         if not v:
             raise ValueError("Palavra é obrigatória")
@@ -135,8 +140,9 @@ class VocabularyItem(BaseModel):
         
         return v.lower().strip()
     
-    @validator('word_class')
-    def validate_word_class(cls, v):
+    @field_validator('word_class')
+    @classmethod
+    def validate_word_class(cls, v: str) -> str:
         """Validar classe gramatical."""
         valid_classes = {
             "noun", "verb", "adjective", "adverb", "preposition", 
@@ -149,8 +155,9 @@ class VocabularyItem(BaseModel):
         
         return v.lower()
     
-    @validator('frequency_level')
-    def validate_frequency_level(cls, v):
+    @field_validator('frequency_level')
+    @classmethod
+    def validate_frequency_level(cls, v: str) -> str:
         """Validar nível de frequência."""
         valid_levels = {"high", "medium", "low", "very_high", "very_low"}
         
@@ -159,8 +166,9 @@ class VocabularyItem(BaseModel):
         
         return v.lower()
     
-    @validator('ipa_variant')
-    def validate_ipa_variant(cls, v):
+    @field_validator('ipa_variant')
+    @classmethod
+    def validate_ipa_variant(cls, v: str) -> str:
         """Validar variante IPA."""
         valid_variants = {
             "general_american", "received_pronunciation", "australian_english",
@@ -172,17 +180,19 @@ class VocabularyItem(BaseModel):
         
         return v.lower()
     
-    @validator('alternative_pronunciations', each_item=True)
-    def validate_alternative_pronunciations(cls, v):
+    @field_validator('alternative_pronunciations')
+    @classmethod
+    def validate_alternative_pronunciations(cls, v: List[str]) -> List[str]:
         """Validar pronúncias alternativas."""
-        # Aplicar a mesma validação IPA
-        if v and not ((v.startswith('/') and v.endswith('/')) or 
-                     (v.startswith('[') and v.endswith(']'))):
-            raise ValueError("Pronúncia alternativa deve seguir formato IPA")
+        # Aplicar a mesma validação IPA para cada item
+        for pronunciation in v:
+            if pronunciation and not ((pronunciation.startswith('/') and pronunciation.endswith('/')) or 
+                                    (pronunciation.startswith('[') and pronunciation.endswith(']'))):
+                raise ValueError("Pronúncia alternativa deve seguir formato IPA")
         return v
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "word": "restaurant",
                 "phoneme": "/ˈrɛstərɑnt/",
@@ -198,10 +208,11 @@ class VocabularyItem(BaseModel):
                 "alternative_pronunciations": ["/ˈrestərɑnt/"]
             }
         }
+    }
 
 
 class VocabularySection(BaseModel):
-    """Seção completa de vocabulário - ATUALIZADA COM RAG E VALIDAÇÃO."""
+    """Seção completa de vocabulário - ATUALIZADA COM RAG E VALIDAÇÃO PYDANTIC V2."""
     items: List[VocabularyItem] = Field(..., description="Lista de itens de vocabulário")
     total_count: int = Field(..., description="Total de palavras")
     context_relevance: float = Field(..., ge=0.0, le=1.0, description="Relevância contextual")
@@ -219,16 +230,19 @@ class VocabularySection(BaseModel):
     
     generated_at: datetime = Field(default_factory=datetime.now)
     
-    @validator('total_count')
-    def validate_total_count(cls, v, values):
+    @field_validator('total_count')
+    @classmethod
+    def validate_total_count(cls, v: int, info: ValidationInfo) -> int:
         """Validar contagem total."""
-        items = values.get('items', [])
-        if v != len(items):
-            return len(items)
+        if hasattr(info, 'data') and 'items' in info.data:
+            items = info.data['items']
+            if v != len(items):
+                return len(items)
         return v
     
-    @validator('items')
-    def validate_items_not_empty(cls, v):
+    @field_validator('items')
+    @classmethod
+    def validate_items_not_empty(cls, v: List[VocabularyItem]) -> List[VocabularyItem]:
         """Validar que há pelo menos alguns itens."""
         if len(v) == 0:
             raise ValueError("Seção de vocabulário deve ter pelo menos 1 item")
@@ -238,8 +252,9 @@ class VocabularySection(BaseModel):
         
         return v
     
-    @validator('phonetic_complexity')
-    def validate_phonetic_complexity(cls, v):
+    @field_validator('phonetic_complexity')
+    @classmethod
+    def validate_phonetic_complexity(cls, v: str) -> str:
         """Validar complexidade fonética."""
         valid_complexities = {"simple", "medium", "complex", "very_complex"}
         
@@ -250,7 +265,7 @@ class VocabularySection(BaseModel):
 
 
 # =============================================================================
-# CONTENT MODELS (Tips & Grammar) - ATUALIZADOS
+# CONTENT MODELS (Tips & Grammar) - ATUALIZADOS PYDANTIC V2
 # =============================================================================
 
 class TipsContent(BaseModel):
@@ -289,7 +304,7 @@ class GrammarContent(BaseModel):
 
 
 # =============================================================================
-# ASSESSMENT MODELS - ATUALIZADOS COM BALANCEAMENTO
+# ASSESSMENT MODELS - ATUALIZADOS COM BALANCEAMENTO PYDANTIC V2
 # =============================================================================
 
 class AssessmentActivity(BaseModel):
@@ -310,8 +325,8 @@ class AssessmentActivity(BaseModel):
     pronunciation_focus: bool = Field(False, description="Atividade foca em pronúncia")
     phonetic_elements: List[str] = Field(default=[], description="Elementos fonéticos avaliados")
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "type": "gap_fill",
                 "title": "Complete the sentences",
@@ -335,6 +350,7 @@ class AssessmentActivity(BaseModel):
                 "phonetic_elements": []
             }
         }
+    }
 
 
 class AssessmentSection(BaseModel):
@@ -351,7 +367,140 @@ class AssessmentSection(BaseModel):
 
 
 # =============================================================================
-# UNIT COMPLETE MODEL - ATUALIZADO COM HIERARQUIA
+# COMMON MISTAKE MODEL - CLASSE FALTANTE QUE ESTAVA CAUSANDO OS ERROS
+# =============================================================================
+
+class CommonMistake(BaseModel):
+    """Modelo para erros comuns identificados e suas correções - Pydantic V2."""
+    mistake_type: str = Field(..., description="Tipo de erro comum")
+    incorrect_form: str = Field(..., description="Forma incorreta")
+    correct_form: str = Field(..., description="Forma correta")
+    explanation: str = Field(..., description="Explicação do erro")
+    examples: List[str] = Field(default=[], description="Exemplos do erro")
+    frequency: str = Field(default="medium", description="Frequência do erro")
+    cefr_level: str = Field(default="A2", description="Nível CEFR onde o erro ocorre")
+    
+    # Campos específicos para brasileiros
+    l1_interference: bool = Field(False, description="É interferência do português?")
+    prevention_strategy: str = Field(default="explicit_instruction", description="Estratégia de prevenção")
+    related_grammar_point: Optional[str] = Field(None, description="Ponto gramatical relacionado")
+    
+    @field_validator('mistake_type')
+    @classmethod
+    def validate_mistake_type(cls, v: str) -> str:
+        """Validar tipo de erro."""
+        valid_types = {
+            "grammatical", "lexical", "phonetic", "semantic", 
+            "syntactic", "spelling", "pronunciation", "usage"
+        }
+        
+        if v.lower() not in valid_types:
+            raise ValueError(f"Tipo de erro deve ser um de: {', '.join(valid_types)}")
+        
+        return v.lower()
+    
+    @field_validator('frequency')
+    @classmethod
+    def validate_frequency(cls, v: str) -> str:
+        """Validar frequência do erro."""
+        valid_frequencies = {"very_low", "low", "medium", "high", "very_high"}
+        
+        if v.lower() not in valid_frequencies:
+            raise ValueError(f"Frequência deve ser uma de: {', '.join(valid_frequencies)}")
+        
+        return v.lower()
+    
+    @field_validator('prevention_strategy')
+    @classmethod
+    def validate_prevention_strategy(cls, v: str) -> str:
+        """Validar estratégia de prevenção."""
+        valid_strategies = {
+            "explicit_instruction", "contrastive_exercises", "drilling", 
+            "error_correction", "awareness_raising", "input_enhancement",
+            "consciousness_raising", "form_focused_instruction"
+        }
+        
+        if v.lower() not in valid_strategies:
+            raise ValueError(f"Estratégia deve ser uma de: {', '.join(valid_strategies)}")
+        
+        return v.lower()
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "mistake_type": "grammatical",
+                "incorrect_form": "I have 25 years",
+                "correct_form": "I am 25 years old",
+                "explanation": "Portuguese speakers often use 'have' for age due to L1 interference",
+                "examples": [
+                    "She has 30 years → She is 30 years old",
+                    "How many years do you have? → How old are you?"
+                ],
+                "frequency": "high",
+                "cefr_level": "A1",
+                "l1_interference": True,
+                "prevention_strategy": "contrastive_exercises",
+                "related_grammar_point": "be_vs_have"
+            }
+        }
+    }
+
+
+class CommonMistakeSection(BaseModel):
+    """Seção de erros comuns para uma unidade - Pydantic V2."""
+    mistakes: List[CommonMistake] = Field(..., description="Lista de erros comuns")
+    total_mistakes: int = Field(..., description="Total de erros identificados")
+    l1_interference_count: int = Field(default=0, description="Quantos são interferência L1")
+    prevention_strategies: List[str] = Field(default=[], description="Estratégias de prevenção")
+    difficulty_level: str = Field(default="intermediate", description="Nível de dificuldade geral")
+    
+    generated_at: datetime = Field(default_factory=datetime.now)
+    
+    @field_validator('total_mistakes')
+    @classmethod
+    def validate_total_mistakes(cls, v: int, info: ValidationInfo) -> int:
+        """Validar contagem total."""
+        if hasattr(info, 'data') and 'mistakes' in info.data:
+            mistakes = info.data['mistakes']
+            if v != len(mistakes):
+                return len(mistakes)
+        return v
+    
+    @field_validator('l1_interference_count')
+    @classmethod
+    def validate_l1_count(cls, v: int, info: ValidationInfo) -> int:
+        """Validar contagem de interferência L1."""
+        if hasattr(info, 'data') and 'mistakes' in info.data:
+            mistakes = info.data['mistakes']
+            actual_l1_count = sum(1 for mistake in mistakes if mistake.l1_interference)
+            if v != actual_l1_count:
+                return actual_l1_count
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "mistakes": [
+                    {
+                        "mistake_type": "grammatical",
+                        "incorrect_form": "I have 25 years",
+                        "correct_form": "I am 25 years old",
+                        "explanation": "Age expression error",
+                        "l1_interference": True,
+                        "prevention_strategy": "contrastive_exercises"
+                    }
+                ],
+                "total_mistakes": 1,
+                "l1_interference_count": 1,
+                "prevention_strategies": ["contrastive_exercises", "explicit_instruction"],
+                "difficulty_level": "beginner"
+            }
+        }
+    }
+
+
+# =============================================================================
+# UNIT COMPLETE MODEL - ATUALIZADO COM HIERARQUIA PYDANTIC V2
 # =============================================================================
 
 class UnitResponse(BaseModel):
@@ -403,8 +552,8 @@ class UnitResponse(BaseModel):
     quality_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Score de qualidade")
     checklist_completed: List[str] = Field(default=[], description="Checklist de qualidade completado")
 
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "id": "unit_hotel_reservations_001",
                 "course_id": "course_english_beginners",
@@ -429,10 +578,11 @@ class UnitResponse(BaseModel):
                 "quality_score": 0.92
             }
         }
+    }
 
 
 # =============================================================================
-# ADDITIONAL MODELS FOR SENTENCES AND QA
+# ADDITIONAL MODELS FOR SENTENCES AND QA - PYDANTIC V2
 # =============================================================================
 
 class Sentence(BaseModel):
@@ -450,8 +600,8 @@ class Sentence(BaseModel):
     phonetic_features: List[str] = Field(default=[], description="Características fonéticas destacadas")
     pronunciation_notes: Optional[str] = Field(None, description="Notas de pronúncia")
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "text": "I need to make a reservation for two people tonight.",
                 "vocabulary_used": ["reservation"],
@@ -463,6 +613,7 @@ class Sentence(BaseModel):
                 "pronunciation_notes": "Note the stress on 'reser-VA-tion'"
             }
         }
+    }
 
 
 class SentencesSection(BaseModel):
@@ -511,7 +662,7 @@ class ImageInfo(BaseModel):
 
 
 # =============================================================================
-# PROGRESS & STATUS MODELS - ATUALIZADOS
+# PROGRESS & STATUS MODELS - ATUALIZADOS PYDANTIC V2
 # =============================================================================
 
 class GenerationProgress(BaseModel):
@@ -604,7 +755,7 @@ class CourseStatistics(BaseModel):
 
 
 # =============================================================================
-# VOCABULARY GENERATION MODELS - NOVOS PARA PROMPT 6
+# VOCABULARY GENERATION MODELS - NOVOS PARA PROMPT 6 PYDANTIC V2
 # =============================================================================
 
 class VocabularyGenerationRequest(BaseModel):
@@ -624,8 +775,8 @@ class VocabularyGenerationRequest(BaseModel):
     avoid_vocabulary: List[str] = Field(default=[], description="Palavras a evitar (já ensinadas)")
     reinforce_vocabulary: List[str] = Field(default=[], description="Palavras para reforçar")
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "images_context": [
                     {
@@ -645,6 +796,7 @@ class VocabularyGenerationRequest(BaseModel):
                 "reinforce_vocabulary": ["hotel", "room"]
             }
         }
+    }
 
 
 class VocabularyGenerationResponse(BaseModel):
@@ -658,8 +810,8 @@ class VocabularyGenerationResponse(BaseModel):
     phoneme_analysis: Dict[str, Any] = Field(..., description="Análise dos fonemas incluídos")
     pronunciation_coverage: Dict[str, float] = Field(..., description="Cobertura de padrões de pronúncia")
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "generation_metadata": {
                     "generation_time_ms": 1500,
@@ -692,10 +844,11 @@ class VocabularyGenerationResponse(BaseModel):
                 }
             }
         }
+    }
 
 
 # =============================================================================
-# PHONETIC VALIDATION MODELS - NOVOS
+# PHONETIC VALIDATION MODELS - NOVOS PYDANTIC V2
 # =============================================================================
 
 class PhoneticValidationResult(BaseModel):
@@ -708,8 +861,8 @@ class PhoneticValidationResult(BaseModel):
     suggestions: List[str] = Field(default=[], description="Sugestões de correção")
     confidence_score: float = Field(..., ge=0.0, le=1.0, description="Confiança na validação")
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "word": "restaurant",
                 "phoneme": "/ˈrɛstərɑnt/",
@@ -724,6 +877,7 @@ class PhoneticValidationResult(BaseModel):
                 "confidence_score": 0.98
             }
         }
+    }
 
 
 class BulkPhoneticValidation(BaseModel):
@@ -740,7 +894,7 @@ class BulkPhoneticValidation(BaseModel):
 
 
 # =============================================================================
-# MIGRATION HELPERS (Para compatibilidade) - ATUALIZADO
+# MIGRATION HELPERS (Para compatibilidade) - ATUALIZADO PYDANTIC V2
 # =============================================================================
 
 class LegacyUnitAdapter(BaseModel):
@@ -809,6 +963,159 @@ class LegacyUnitAdapter(BaseModel):
                 continue
         
         return migrated_items
+
+
+# =============================================================================
+# L1 INTERFERENCE PATTERN MODEL - PYDANTIC V2
+# =============================================================================
+
+class L1InterferencePattern(BaseModel):
+    """Modelo para padrões de interferência L1→L2 (português→inglês)."""
+    pattern_type: str = Field(..., description="Tipo de padrão de interferência")
+    portuguese_structure: str = Field(..., description="Estrutura em português")
+    incorrect_english: str = Field(..., description="Inglês incorreto (interferência)")
+    correct_english: str = Field(..., description="Inglês correto")
+    explanation: str = Field(..., description="Explicação da interferência")
+    prevention_strategy: str = Field(..., description="Estratégia de prevenção")
+    examples: List[str] = Field(default=[], description="Exemplos adicionais")
+    difficulty_level: str = Field(default="intermediate", description="Nível de dificuldade")
+    
+    # Validações específicas
+    @field_validator('pattern_type')
+    @classmethod
+    def validate_pattern_type(cls, v: str) -> str:
+        """Validar tipo de padrão."""
+        valid_types = {
+            "grammatical", "lexical", "phonetic", "semantic", 
+            "syntactic", "cultural", "pragmatic"
+        }
+        
+        if v.lower() not in valid_types:
+            raise ValueError(f"Tipo de padrão deve ser um de: {', '.join(valid_types)}")
+        
+        return v.lower()
+    
+    @field_validator('difficulty_level')
+    @classmethod
+    def validate_difficulty_level(cls, v: str) -> str:
+        """Validar nível de dificuldade."""
+        valid_levels = {"beginner", "elementary", "intermediate", "upper_intermediate", "advanced"}
+        
+        if v.lower() not in valid_levels:
+            raise ValueError(f"Nível de dificuldade deve ser um de: {', '.join(valid_levels)}")
+        
+        return v.lower()
+    
+    @field_validator('prevention_strategy')
+    @classmethod
+    def validate_prevention_strategy(cls, v: str) -> str:
+        """Validar estratégia de prevenção."""
+        valid_strategies = {
+            "contrastive_exercises", "awareness_raising", "drilling", 
+            "error_correction", "explicit_instruction", "input_enhancement",
+            "consciousness_raising", "form_focused_instruction"
+        }
+        
+        if v.lower() not in valid_strategies:
+            raise ValueError(f"Estratégia deve ser uma de: {', '.join(valid_strategies)}")
+        
+        return v.lower()
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "pattern_type": "grammatical",
+                "portuguese_structure": "Eu tenho 25 anos",
+                "incorrect_english": "I have 25 years",
+                "correct_english": "I am 25 years old",
+                "explanation": "Portuguese uses 'ter' (have) for age, English uses 'be'",
+                "prevention_strategy": "contrastive_exercises",
+                "examples": [
+                    "I am 30 years old",
+                    "She is 25 years old",
+                    "How old are you? (not: How many years do you have?)"
+                ],
+                "difficulty_level": "beginner"
+            }
+        }
+    }
+
+
+class L1InterferenceAnalysis(BaseModel):
+    """Análise completa de interferência L1→L2."""
+    grammar_point: str = Field(..., description="Ponto gramatical analisado")
+    vocabulary_items: List[str] = Field(..., description="Itens de vocabulário analisados")
+    cefr_level: str = Field(..., description="Nível CEFR do conteúdo")
+    
+    identified_patterns: List[L1InterferencePattern] = Field(..., description="Padrões identificados")
+    prevention_strategies: List[str] = Field(..., description="Estratégias de prevenção gerais")
+    common_mistakes: List[str] = Field(..., description="Erros comuns identificados")
+    preventive_exercises: List[Dict[str, Any]] = Field(..., description="Exercícios preventivos sugeridos")
+    
+    # Métricas de análise
+    interference_risk_score: float = Field(..., ge=0.0, le=1.0, description="Score de risco de interferência")
+    patterns_count: int = Field(..., ge=0, description="Número de padrões identificados")
+    coverage_areas: List[str] = Field(..., description="Áreas de interferência cobertas")
+    
+    generated_at: datetime = Field(default_factory=datetime.now)
+    
+    @field_validator('interference_risk_score')
+    @classmethod
+    def validate_risk_score(cls, v: float) -> float:
+        """Validar score de risco."""
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("Score de risco deve estar entre 0.0 e 1.0")
+        return v
+    
+    @field_validator('patterns_count')
+    @classmethod
+    def validate_patterns_count(cls, v: int, info: ValidationInfo) -> int:
+        """Validar contagem de padrões."""
+        if hasattr(info, 'data') and 'identified_patterns' in info.data:
+            patterns = info.data['identified_patterns']
+            if v != len(patterns):
+                return len(patterns)
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "grammar_point": "Age expressions",
+                "vocabulary_items": ["age", "years", "old", "young"],
+                "cefr_level": "A1",
+                "identified_patterns": [
+                    {
+                        "pattern_type": "grammatical",
+                        "portuguese_structure": "Eu tenho X anos",
+                        "incorrect_english": "I have X years",
+                        "correct_english": "I am X years old",
+                        "explanation": "Age structure difference PT vs EN",
+                        "prevention_strategy": "contrastive_exercises"
+                    }
+                ],
+                "prevention_strategies": [
+                    "Contrast exercises Portuguese vs English",
+                    "Explicit instruction on BE vs HAVE",
+                    "Drilling with age expressions"
+                ],
+                "common_mistakes": [
+                    "Using HAVE instead of BE for age",
+                    "Literal translation from Portuguese",
+                    "Missing 'old' in age expressions"
+                ],
+                "preventive_exercises": [
+                    {
+                        "type": "contrast_exercise",
+                        "description": "Compare PT and EN age expressions",
+                        "examples": ["PT: Tenho 20 anos → EN: I am 20 years old"]
+                    }
+                ],
+                "interference_risk_score": 0.8,
+                "patterns_count": 1,
+                "coverage_areas": ["grammatical_structure", "verb_usage"]
+            }
+        }
+    }
 
 
 # =============================================================================
@@ -891,150 +1198,6 @@ def validate_ipa_consistency(vocabulary_items: List[VocabularyItem]) -> Dict[str
         "stress_patterns_used": list(unique_patterns)
     }
 
-# =============================================================================
-# L1 INTERFERENCE PATTERN MODEL - ADICIONAR AO FINAL DE unit_models.py
-# =============================================================================
-
-class L1InterferencePattern(BaseModel):
-    """Modelo para padrões de interferência L1→L2 (português→inglês)."""
-    pattern_type: str = Field(..., description="Tipo de padrão de interferência")
-    portuguese_structure: str = Field(..., description="Estrutura em português")
-    incorrect_english: str = Field(..., description="Inglês incorreto (interferência)")
-    correct_english: str = Field(..., description="Inglês correto")
-    explanation: str = Field(..., description="Explicação da interferência")
-    prevention_strategy: str = Field(..., description="Estratégia de prevenção")
-    examples: List[str] = Field(default=[], description="Exemplos adicionais")
-    difficulty_level: str = Field(default="intermediate", description="Nível de dificuldade")
-    
-    # Validações específicas
-    @validator('pattern_type')
-    def validate_pattern_type(cls, v):
-        """Validar tipo de padrão."""
-        valid_types = {
-            "grammatical", "lexical", "phonetic", "semantic", 
-            "syntactic", "cultural", "pragmatic"
-        }
-        
-        if v.lower() not in valid_types:
-            raise ValueError(f"Tipo de padrão deve ser um de: {', '.join(valid_types)}")
-        
-        return v.lower()
-    
-    @validator('difficulty_level')
-    def validate_difficulty_level(cls, v):
-        """Validar nível de dificuldade."""
-        valid_levels = {"beginner", "elementary", "intermediate", "upper_intermediate", "advanced"}
-        
-        if v.lower() not in valid_levels:
-            raise ValueError(f"Nível de dificuldade deve ser um de: {', '.join(valid_levels)}")
-        
-        return v.lower()
-    
-    @validator('prevention_strategy')
-    def validate_prevention_strategy(cls, v):
-        """Validar estratégia de prevenção."""
-        valid_strategies = {
-            "contrastive_exercises", "awareness_raising", "drilling", 
-            "error_correction", "explicit_instruction", "input_enhancement",
-            "consciousness_raising", "form_focused_instruction"
-        }
-        
-        if v.lower() not in valid_strategies:
-            raise ValueError(f"Estratégia deve ser uma de: {', '.join(valid_strategies)}")
-        
-        return v.lower()
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "pattern_type": "grammatical",
-                "portuguese_structure": "Eu tenho 25 anos",
-                "incorrect_english": "I have 25 years",
-                "correct_english": "I am 25 years old",
-                "explanation": "Portuguese uses 'ter' (have) for age, English uses 'be'",
-                "prevention_strategy": "contrastive_exercises",
-                "examples": [
-                    "I am 30 years old",
-                    "She is 25 years old",
-                    "How old are you? (not: How many years do you have?)"
-                ],
-                "difficulty_level": "beginner"
-            }
-        }
-
-
-class L1InterferenceAnalysis(BaseModel):
-    """Análise completa de interferência L1→L2."""
-    grammar_point: str = Field(..., description="Ponto gramatical analisado")
-    vocabulary_items: List[str] = Field(..., description="Itens de vocabulário analisados")
-    cefr_level: str = Field(..., description="Nível CEFR do conteúdo")
-    
-    identified_patterns: List[L1InterferencePattern] = Field(..., description="Padrões identificados")
-    prevention_strategies: List[str] = Field(..., description="Estratégias de prevenção gerais")
-    common_mistakes: List[str] = Field(..., description="Erros comuns identificados")
-    preventive_exercises: List[Dict[str, Any]] = Field(..., description="Exercícios preventivos sugeridos")
-    
-    # Métricas de análise
-    interference_risk_score: float = Field(..., ge=0.0, le=1.0, description="Score de risco de interferência")
-    patterns_count: int = Field(..., ge=0, description="Número de padrões identificados")
-    coverage_areas: List[str] = Field(..., description="Áreas de interferência cobertas")
-    
-    generated_at: datetime = Field(default_factory=datetime.now)
-    
-    @validator('interference_risk_score')
-    def validate_risk_score(cls, v):
-        """Validar score de risco."""
-        if not 0.0 <= v <= 1.0:
-            raise ValueError("Score de risco deve estar entre 0.0 e 1.0")
-        return v
-    
-    @validator('patterns_count')
-    def validate_patterns_count(cls, v, values):
-        """Validar contagem de padrões."""
-        patterns = values.get('identified_patterns', [])
-        if v != len(patterns):
-            return len(patterns)
-        return v
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "grammar_point": "Age expressions",
-                "vocabulary_items": ["age", "years", "old", "young"],
-                "cefr_level": "A1",
-                "identified_patterns": [
-                    {
-                        "pattern_type": "grammatical",
-                        "portuguese_structure": "Eu tenho X anos",
-                        "incorrect_english": "I have X years",
-                        "correct_english": "I am X years old",
-                        "explanation": "Age structure difference PT vs EN",
-                        "prevention_strategy": "contrastive_exercises"
-                    }
-                ],
-                "prevention_strategies": [
-                    "Contrast exercises Portuguese vs English",
-                    "Explicit instruction on BE vs HAVE",
-                    "Drilling with age expressions"
-                ],
-                "common_mistakes": [
-                    "Using HAVE instead of BE for age",
-                    "Literal translation from Portuguese",
-                    "Missing 'old' in age expressions"
-                ],
-                "preventive_exercises": [
-                    {
-                        "type": "contrast_exercise",
-                        "description": "Compare PT and EN age expressions",
-                        "examples": ["PT: Tenho 20 anos → EN: I am 20 years old"]
-                    }
-                ],
-                "interference_risk_score": 0.8,
-                "patterns_count": 1,
-                "coverage_areas": ["grammatical_structure", "verb_usage"]
-            }
-        }
-
 
 # =============================================================================
 # UTILIDADES PARA L1 INTERFERENCE
@@ -1093,6 +1256,14 @@ def get_common_l1_interference_patterns() -> List[L1InterferencePattern]:
             correct_english="Maria is taller than Ana",
             explanation="Portuguese always uses 'mais + adjective', English has irregular comparatives",
             prevention_strategy="drilling",
+        ),
+        L1InterferencePattern(
+            pattern_type="grammatical",
+            portuguese_structure="A Maria é mais alta que a Ana",
+            incorrect_english="Maria is more tall than Ana",
+            correct_english="Maria is taller than Ana",
+            explanation="Portuguese always uses 'mais + adjective', English has irregular comparatives",
+            prevention_strategy="drilling",
             examples=["bigger (not more big)", "better (not more good)"],
             difficulty_level="elementary"
         ),
@@ -1116,7 +1287,7 @@ def get_common_l1_interference_patterns() -> List[L1InterferencePattern]:
             examples=["I intend to study", "I plan to travel"],
             difficulty_level="intermediate"
         )
-    ]
+        ]
 
 
 def analyze_text_for_l1_interference(text: str, cefr_level: str) -> List[str]:
@@ -1143,11 +1314,185 @@ def analyze_text_for_l1_interference(text: str, cefr_level: str) -> List[str]:
 
 
 # =============================================================================
-# FORWARD REFERENCES FIX
+# UTILIDADES PARA COMMON MISTAKES
 # =============================================================================
 
-# Resolver referências circulares
+def create_common_mistake(
+    mistake_type: str,
+    incorrect_form: str,
+    correct_form: str,
+    explanation: str,
+    examples: List[str] = None,
+    l1_interference: bool = False,
+    prevention_strategy: str = "explicit_instruction",
+    frequency: str = "medium",
+    cefr_level: str = "A2"
+) -> CommonMistake:
+    """Criar um erro comum."""
+    return CommonMistake(
+        mistake_type=mistake_type,
+        incorrect_form=incorrect_form,
+        correct_form=correct_form,
+        explanation=explanation,
+        examples=examples or [],
+        l1_interference=l1_interference,
+        prevention_strategy=prevention_strategy,
+        frequency=frequency,
+        cefr_level=cefr_level
+    )
+
+
+def get_common_brazilian_mistakes() -> List[CommonMistake]:
+    """Retornar erros comuns para brasileiros."""
+    return [
+        CommonMistake(
+            mistake_type="grammatical",
+            incorrect_form="I have 25 years",
+            correct_form="I am 25 years old",
+            explanation="Portuguese uses 'ter' (have) for age, English uses 'be'",
+            examples=["She has 30 years → She is 30 years old"],
+            l1_interference=True,
+            prevention_strategy="contrastive_exercises",
+            frequency="very_high",
+            cefr_level="A1"
+        ),
+        CommonMistake(
+            mistake_type="lexical",
+            incorrect_form="I am with hunger",
+            correct_form="I am hungry",
+            explanation="Portuguese 'estar com fome' vs English adjective",
+            examples=["I am with thirst → I am thirsty"],
+            l1_interference=True,
+            prevention_strategy="explicit_instruction",
+            frequency="high",
+            cefr_level="A1"
+        ),
+        CommonMistake(
+            mistake_type="grammatical",
+            incorrect_form="The work",
+            correct_form="Work",
+            explanation="Portuguese uses definite article with abstract nouns",
+            examples=["The life is beautiful → Life is beautiful"],
+            l1_interference=True,
+            prevention_strategy="awareness_raising",
+            frequency="high",
+            cefr_level="A2"
+        ),
+        CommonMistake(
+            mistake_type="phonetic",
+            incorrect_form="/ˈhospɪtal/",
+            correct_form="/ˈhɒspɪtl/",
+            explanation="Portuguese stress on final syllable vs English initial stress",
+            examples=["hotel, animal, normal"],
+            l1_interference=True,
+            prevention_strategy="drilling",
+            frequency="medium",
+            cefr_level="A2"
+        )
+    ]
+
+
+def analyze_text_for_common_mistakes(text: str) -> List[CommonMistake]:
+    """Analisar texto para identificar erros comuns."""
+    common_mistakes = get_common_brazilian_mistakes()
+    identified_mistakes = []
+    
+    text_lower = text.lower()
+    
+    # Verificar padrões de erro conhecidos
+    for mistake in common_mistakes:
+        incorrect_parts = mistake.incorrect_form.lower().split()
+        if all(part in text_lower for part in incorrect_parts):
+            identified_mistakes.append(mistake)
+    
+    return identified_mistakes
+
+
+# =============================================================================
+# FORWARD REFERENCES FIX - PYDANTIC V2 COMPATIBLE
+# =============================================================================
+
+# Resolver referências circulares para Pydantic V2
 UnitResponse.model_rebuild()
 VocabularySection.model_rebuild()
 SentencesSection.model_rebuild()
 QASection.model_rebuild()
+
+
+# =============================================================================
+# EXPORTS E VERSIONING
+# =============================================================================
+
+__all__ = [
+    # Input Models
+    "UnitCreateRequest",
+    
+    # Vocabulary Models
+    "VocabularyItem",
+    "VocabularySection",
+    "VocabularyGenerationRequest", 
+    "VocabularyGenerationResponse",
+    
+    # Content Models
+    "TipsContent",
+    "GrammarContent",
+    
+    # Assessment Models
+    "AssessmentActivity",
+    "AssessmentSection",
+    
+    # Common Mistake Models - NOVO
+    "CommonMistake",
+    "CommonMistakeSection",
+    
+    # Unit Models
+    "UnitResponse",
+    
+    # Additional Content Models
+    "Sentence",
+    "SentencesSection",
+    "QASection",
+    "ImageInfo",
+    
+    # Progress Models
+    "GenerationProgress",
+    "ErrorResponse",
+    "SuccessResponse",
+    
+    # Bulk Models
+    "BulkUnitStatus",
+    "CourseStatistics",
+    
+    # Phonetic Models
+    "PhoneticValidationResult",
+    "BulkPhoneticValidation",
+    
+    # L1 Interference Models
+    "L1InterferencePattern",
+    "L1InterferenceAnalysis",
+    
+    # Legacy Models
+    "LegacyUnitAdapter",
+    
+    # Utility Functions
+    "extract_phonemes_from_vocabulary",
+    "analyze_phonetic_complexity",
+    "validate_ipa_consistency",
+    "create_l1_interference_pattern",
+    "get_common_l1_interference_patterns",
+    "analyze_text_for_l1_interference",
+    "create_common_mistake",
+    "get_common_brazilian_mistakes",
+    "analyze_text_for_common_mistakes"
+]
+
+# Versioning para Pydantic V2
+__pydantic_version__ = "2.x"
+__compatibility__ = "Pydantic V2 Compatible"
+__migration_date__ = "2025-01-28"
+__breaking_changes__ = [
+    "@validator → @field_validator",
+    "class Config → model_config", 
+    "schema_extra → json_schema_extra",
+    "values → info.data in validators"
+]

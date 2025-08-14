@@ -995,7 +995,7 @@ async def debug_api_status():
             "src.api.v2.grammar",
             "src.api.v2.assessments",
             "src.api.v2.qa",
-            "src.api.v2.health"
+            "src.api.health"
         ]
     }
 
