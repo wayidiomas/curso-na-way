@@ -359,34 +359,3 @@ def _generate_health_recommendations(diagnostics: Dict[str, Any]) -> List[str]:
         recommendations.append("Sistema funcionando corretamente - pronto para geração de conteúdo")
     
     return recommendations
-
-
-# ✅ ALTERNATIVA: Endpoint adicional usando JSONResponse diretamente
-@router.get("/detailed-json")
-async def detailed_health_check_json():
-    """Health check detalhado retornando JSONResponse diretamente."""
-    try:
-        # Reusar lógica do endpoint principal
-        detailed_response = await detailed_health_check()
-        
-        # Converter para dict e retornar como JSONResponse
-        response_dict = {
-            "overall_status": detailed_response.overall_status,
-            "timestamp": detailed_response.timestamp,
-            "diagnostics": detailed_response.diagnostics,
-            "recommendations": detailed_response.recommendations
-        }
-        
-        return JSONResponse(content=response_dict)
-        
-    except Exception as e:
-        logger.error(f"Erro no health check detalhado: {str(e)}")
-        return JSONResponse(
-            content={
-                "overall_status": "error",
-                "timestamp": datetime.now().isoformat(),
-                "error": str(e),
-                "recommendations": ["Verificar logs do sistema"]
-            },
-            status_code=500
-        )

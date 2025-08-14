@@ -613,7 +613,7 @@ def register_routers():
     health_router = router_loader.get_router("health")
     if health_router:
         try:
-            app.include_router(health_router, prefix="/health", tags=["health"])
+            app.include_router(health_router, tags=["health"])
             logger.info("✅ Health router registrado")
         except Exception as e:
             logger.error(f"❌ Erro ao registrar health router: {str(e)}")
