@@ -1,10 +1,15 @@
 # src/core/unit_models.py - ATUALIZADO PARA PYDANTIC V2 COMPLETO
 """Modelos específicos para o sistema IVO V2 com hierarquia Course → Book → Unit."""
 from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, HttpUrl, field_validator, ValidationInfo
+from pydantic import BaseModel, Field, HttpUrl, field_validator, ValidationInfo, ValidationError
 from datetime import datetime
 from fastapi import UploadFile
 import re
+import time        # Para timestamps
+import json        # Para parsing JSON  
+import uuid        # Para UUIDs
+import logging     # Para logs
+from pathlib import Path
 
 from .enums import (
     CEFRLevel, LanguageVariant, UnitType, AimType, 
@@ -371,7 +376,7 @@ class AssessmentSection(BaseModel):
 # =============================================================================
 
 class CommonMistake(BaseModel):
-    """Modelo para erros comuns identificados e suas correções - Pydantic V2."""
+    """Modelo para erros comuns identificados e suas correções - Pydantic V2 Otimizada."""
     mistake_type: str = Field(..., description="Tipo de erro comum")
     incorrect_form: str = Field(..., description="Forma incorreta")
     correct_form: str = Field(..., description="Forma correta")
@@ -385,17 +390,29 @@ class CommonMistake(BaseModel):
     prevention_strategy: str = Field(default="explicit_instruction", description="Estratégia de prevenção")
     related_grammar_point: Optional[str] = Field(None, description="Ponto gramatical relacionado")
     
+    # ✅ MELHORIA 1: Campos adicionais úteis
+    context_where_occurs: Optional[str] = Field(None, description="Contexto onde o erro é comum")
+    age_group_frequency: Optional[str] = Field(None, description="Faixa etária onde é mais comum")
+    remedial_exercises: List[str] = Field(default=[], description="Exercícios específicos para correção")
+    
+    # ✅ MELHORIA 2: Metadados de tracking
+    first_observed: Optional[datetime] = Field(None, description="Quando foi observado primeiro")
+    severity_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Score de severidade (0-1)")
+    
     @field_validator('mistake_type')
     @classmethod
     def validate_mistake_type(cls, v: str) -> str:
         """Validar tipo de erro."""
         valid_types = {
             "grammatical", "lexical", "phonetic", "semantic", 
-            "syntactic", "spelling", "pronunciation", "usage"
+            "syntactic", "spelling", "pronunciation", "usage",
+            # ✅ MELHORIA 3: Tipos adicionais específicos para brasileiros
+            "article_omission", "preposition_confusion", "false_friend",
+            "word_order", "verb_tense", "modal_usage"
         }
         
         if v.lower() not in valid_types:
-            raise ValueError(f"Tipo de erro deve ser um de: {', '.join(valid_types)}")
+            raise ValueError(f"Tipo de erro deve ser um de: {', '.join(sorted(valid_types))}")
         
         return v.lower()
     
@@ -406,7 +423,7 @@ class CommonMistake(BaseModel):
         valid_frequencies = {"very_low", "low", "medium", "high", "very_high"}
         
         if v.lower() not in valid_frequencies:
-            raise ValueError(f"Frequência deve ser uma de: {', '.join(valid_frequencies)}")
+            raise ValueError(f"Frequência deve ser uma de: {', '.join(sorted(valid_frequencies))}")
         
         return v.lower()
     
@@ -417,11 +434,41 @@ class CommonMistake(BaseModel):
         valid_strategies = {
             "explicit_instruction", "contrastive_exercises", "drilling", 
             "error_correction", "awareness_raising", "input_enhancement",
-            "consciousness_raising", "form_focused_instruction"
+            "consciousness_raising", "form_focused_instruction",
+            # ✅ MELHORIA 4: Estratégias adicionais específicas
+            "pattern_recognition", "metalinguistic_awareness", 
+            "controlled_practice", "communicative_practice"
         }
         
         if v.lower() not in valid_strategies:
-            raise ValueError(f"Estratégia deve ser uma de: {', '.join(valid_strategies)}")
+            raise ValueError(f"Estratégia deve ser uma de: {', '.join(sorted(valid_strategies))}")
+        
+        return v.lower()
+    
+    # ✅ MELHORIA 5: Validador para CEFR
+    @field_validator('cefr_level')
+    @classmethod
+    def validate_cefr_level(cls, v: str) -> str:
+        """Validar nível CEFR."""
+        valid_levels = {"A1", "A2", "B1", "B2", "C1", "C2"}
+        
+        if v.upper() not in valid_levels:
+            raise ValueError(f"Nível CEFR deve ser um de: {', '.join(sorted(valid_levels))}")
+        
+        return v.upper()
+    
+    # ✅ MELHORIA 6: Validador para age_group_frequency
+    @field_validator('age_group_frequency')
+    @classmethod
+    def validate_age_group(cls, v: Optional[str]) -> Optional[str]:
+        """Validar faixa etária."""
+        if v is None:
+            return v
+            
+        valid_groups = {"children", "teenagers", "young_adults", "adults", "seniors", "all_ages"}
+        
+        if v.lower() not in valid_groups:
+            raise ValueError(f"Faixa etária deve ser uma de: {', '.join(sorted(valid_groups))}")
         
         return v.lower()
     
@@ -436,11 +483,19 @@ class CommonMistake(BaseModel):
                     "She has 30 years → She is 30 years old",
                     "How many years do you have? → How old are you?"
                 ],
-                "frequency": "high",
+                "frequency": "very_high",
                 "cefr_level": "A1",
                 "l1_interference": True,
                 "prevention_strategy": "contrastive_exercises",
-                "related_grammar_point": "be_vs_have"
+                "related_grammar_point": "be_vs_have",
+                "context_where_occurs": "Personal introductions, age discussions",
+                "age_group_frequency": "all_ages",
+                "remedial_exercises": [
+                    "Age expression drills",
+                    "Contrastive PT vs EN exercises",
+                    "Controlled practice with BE + age"
+                ],
+                "severity_score": 0.9
             }
         }
     }
@@ -1326,9 +1381,13 @@ def create_common_mistake(
     l1_interference: bool = False,
     prevention_strategy: str = "explicit_instruction",
     frequency: str = "medium",
-    cefr_level: str = "A2"
+    cefr_level: str = "A2",
+    # ✅ NOVOS PARÂMETROS
+    context_where_occurs: Optional[str] = None,
+    severity_score: Optional[float] = None,
+    remedial_exercises: List[str] = None
 ) -> CommonMistake:
-    """Criar um erro comum."""
+    """Criar um erro comum com parâmetros expandidos."""
     return CommonMistake(
         mistake_type=mistake_type,
         incorrect_form=incorrect_form,
@@ -1338,76 +1397,586 @@ def create_common_mistake(
         l1_interference=l1_interference,
         prevention_strategy=prevention_strategy,
         frequency=frequency,
-        cefr_level=cefr_level
+        cefr_level=cefr_level,
+        context_where_occurs=context_where_occurs,
+        severity_score=severity_score,
+        remedial_exercises=remedial_exercises or []
     )
 
 
 def get_common_brazilian_mistakes() -> List[CommonMistake]:
-    """Retornar erros comuns para brasileiros."""
+    """Retornar erros comuns para brasileiros - VERSÃO EXPANDIDA."""
     return [
         CommonMistake(
             mistake_type="grammatical",
             incorrect_form="I have 25 years",
             correct_form="I am 25 years old",
             explanation="Portuguese uses 'ter' (have) for age, English uses 'be'",
-            examples=["She has 30 years → She is 30 years old"],
+            examples=[
+                "She has 30 years → She is 30 years old",
+                "My brother has 18 years → My brother is 18 years old"
+            ],
             l1_interference=True,
             prevention_strategy="contrastive_exercises",
             frequency="very_high",
-            cefr_level="A1"
+            cefr_level="A1",
+            context_where_occurs="Personal introductions, biographical information",
+            age_group_frequency="all_ages",
+            severity_score=0.95,
+            remedial_exercises=[
+                "BE + age drills",
+                "How old questions practice",
+                "Contrastive Portuguese vs English"
+            ]
         ),
         CommonMistake(
-            mistake_type="lexical",
+            mistake_type="lexical", 
             incorrect_form="I am with hunger",
             correct_form="I am hungry",
             explanation="Portuguese 'estar com fome' vs English adjective",
-            examples=["I am with thirst → I am thirsty"],
+            examples=[
+                "I am with thirst → I am thirsty",
+                "She is with cold → She is cold"
+            ],
             l1_interference=True,
-            prevention_strategy="explicit_instruction",
+            prevention_strategy="pattern_recognition",
             frequency="high",
-            cefr_level="A1"
+            cefr_level="A1",
+            context_where_occurs="Daily activities, basic needs expression",
+            age_group_frequency="all_ages",
+            severity_score=0.8,
+            remedial_exercises=[
+                "BE + adjective practice",
+                "Physical state expressions",
+                "Contrast exercises: COM vs adjective"
+            ]
         ),
         CommonMistake(
-            mistake_type="grammatical",
-            incorrect_form="The work",
-            correct_form="Work",
+            mistake_type="article_omission",
+            incorrect_form="The life is beautiful",
+            correct_form="Life is beautiful", 
             explanation="Portuguese uses definite article with abstract nouns",
-            examples=["The life is beautiful → Life is beautiful"],
+            examples=[
+                "The love is important → Love is important",
+                "The music helps relaxation → Music helps relaxation"
+            ],
             l1_interference=True,
             prevention_strategy="awareness_raising",
             frequency="high",
-            cefr_level="A2"
+            cefr_level="A2",
+            context_where_occurs="Abstract concepts, generalizations",
+            age_group_frequency="teenagers",
+            severity_score=0.7,
+            remedial_exercises=[
+                "Abstract noun practice",
+                "Article omission drills",
+                "Generalization statements"
+            ]
         ),
         CommonMistake(
-            mistake_type="phonetic",
-            incorrect_form="/ˈhospɪtal/",
-            correct_form="/ˈhɒspɪtl/",
+            mistake_type="false_friend",
+            incorrect_form="I will assist the conference",
+            correct_form="I will attend the conference",
+            explanation="Portuguese 'assistir' = English 'attend', not 'assist'",
+            examples=[
+                "I assisted the movie → I watched the movie",
+                "Did you assist the class? → Did you attend the class?"
+            ],
+            l1_interference=True,
+            prevention_strategy="explicit_instruction",
+            frequency="medium",
+            cefr_level="B1",
+            context_where_occurs="Academic and professional contexts",
+            age_group_frequency="adults",
+            severity_score=0.6,
+            remedial_exercises=[
+                "False friends identification",
+                "Context-based vocabulary practice",
+                "Attend vs assist contrast"
+            ]
+        ),
+        CommonMistake(
+            mistake_type="pronunciation",
+            incorrect_form="/ˈhospɪtal/ (stress on final)",
+            correct_form="/ˈhɒspɪtl/ (stress on first)",
             explanation="Portuguese stress on final syllable vs English initial stress",
-            examples=["hotel, animal, normal"],
+            examples=[
+                "hotel: /hoˈtɛw/ → /hoʊˈtel/",
+                "animal: /aniˈmaw/ → /ˈænɪməl/"
+            ],
             l1_interference=True,
             prevention_strategy="drilling",
             frequency="medium",
-            cefr_level="A2"
+            cefr_level="A2",
+            context_where_occurs="Cognate words, formal vocabulary",
+            age_group_frequency="all_ages",
+            severity_score=0.5,
+            remedial_exercises=[
+                "Stress pattern recognition",
+                "Cognate pronunciation drills",
+                "Minimal pair practice"
+            ]
         )
     ]
 
 
-def analyze_text_for_common_mistakes(text: str) -> List[CommonMistake]:
-    """Analisar texto para identificar erros comuns."""
+# ✅ MELHORIA 7: Função de análise mais robusta
+def analyze_text_for_common_mistakes(
+    text: str, 
+    cefr_level: str = "A2",
+    focus_l1_interference: bool = True
+) -> Dict[str, Any]:
+    """Analisar texto para identificar erros comuns - VERSÃO MELHORADA."""
     common_mistakes = get_common_brazilian_mistakes()
     identified_mistakes = []
     
     text_lower = text.lower()
     
+    # Filtrar por nível CEFR se especificado
+    if cefr_level:
+        common_mistakes = [
+            mistake for mistake in common_mistakes 
+            if mistake.cefr_level <= cefr_level
+        ]
+    
+    # Filtrar por interferência L1 se especificado
+    if focus_l1_interference:
+        common_mistakes = [
+            mistake for mistake in common_mistakes 
+            if mistake.l1_interference
+        ]
+    
     # Verificar padrões de erro conhecidos
     for mistake in common_mistakes:
+        # Análise mais sofisticada
         incorrect_parts = mistake.incorrect_form.lower().split()
-        if all(part in text_lower for part in incorrect_parts):
+        
+        # Verificar se padrão existe no texto
+        pattern_found = False
+        
+        # Verificação por palavras-chave
+        if len(incorrect_parts) <= 3:
+            pattern_found = all(part in text_lower for part in incorrect_parts)
+        else:
+            # Para padrões mais complexos, verificar proximidade
+            positions = []
+            for part in incorrect_parts:
+                if part in text_lower:
+                    positions.append(text_lower.find(part))
+                else:
+                    break
+            
+            if len(positions) == len(incorrect_parts):
+                # Verificar se palavras estão próximas (dentro de 10 caracteres)
+                max_distance = max(positions) - min(positions)
+                pattern_found = max_distance <= 20
+        
+        if pattern_found:
             identified_mistakes.append(mistake)
     
-    return identified_mistakes
+    # Análise estatística
+    total_words = len(text.split())
+    error_density = len(identified_mistakes) / max(total_words, 1)
+    
+    # Categorizar erros
+    error_categories = {}
+    severity_scores = []
+    
+    for mistake in identified_mistakes:
+        category = mistake.mistake_type
+        error_categories[category] = error_categories.get(category, 0) + 1
+        
+        if mistake.severity_score:
+            severity_scores.append(mistake.severity_score)
+    
+    return {
+        "identified_mistakes": identified_mistakes,
+        "analysis_summary": {
+            "total_errors_found": len(identified_mistakes),
+            "error_density": round(error_density, 3),
+            "average_severity": round(sum(severity_scores) / len(severity_scores), 2) if severity_scores else 0,
+            "error_categories": error_categories,
+            "l1_interference_errors": len([m for m in identified_mistakes if m.l1_interference]),
+            "most_common_error_type": max(error_categories.keys(), key=error_categories.get) if error_categories else None
+        },
+        "recommendations": [
+            f"Focus on {mistake.prevention_strategy} for {mistake.mistake_type} errors"
+            for mistake in identified_mistakes[:3]
+        ],
+        "text_analysis": {
+            "word_count": total_words,
+            "cefr_level_analyzed": cefr_level,
+            "l1_interference_focus": focus_l1_interference
+        }
+    }
 
 
+# =============================================================================
+# FUNÇÕES UTILITÁRIAS ADICIONAIS
+# =============================================================================
+
+def get_mistakes_by_cefr_level(cefr_level: str) -> List[CommonMistake]:
+    """Obter erros comuns para um nível CEFR específico."""
+    all_mistakes = get_common_brazilian_mistakes()
+    return [mistake for mistake in all_mistakes if mistake.cefr_level == cefr_level.upper()]
+
+
+def get_mistakes_by_type(mistake_type: str) -> List[CommonMistake]:
+    """Obter erros comuns por tipo."""
+    all_mistakes = get_common_brazilian_mistakes()
+    return [mistake for mistake in all_mistakes if mistake.mistake_type == mistake_type.lower()]
+
+
+def get_high_priority_mistakes() -> List[CommonMistake]:
+    """Obter erros de alta prioridade (frequency=high/very_high, severity>0.7)."""
+    all_mistakes = get_common_brazilian_mistakes()
+    return [
+        mistake for mistake in all_mistakes 
+        if mistake.frequency in ["high", "very_high"] and 
+           (mistake.severity_score or 0) > 0.7
+    ]
+
+
+# =============================================================================
+# VALIDAÇÃO E STATUS
+# =============================================================================
+
+def validate_common_mistake_structure(mistake_data: dict) -> Dict[str, Any]:
+    """Validar estrutura de dados de erro comum."""
+    try:
+        mistake = CommonMistake(**mistake_data)
+        return {
+            "valid": True,
+            "validated_mistake": mistake,
+            "validation_errors": []
+        }
+    except ValidationError as e:
+        return {
+            "valid": False,
+            "validated_mistake": None,
+            "validation_errors": [str(error) for error in e.errors()]
+        }
+
+
+# Constrastive example
+class ContrastiveExample(BaseModel):
+    """
+    Exemplo contrastivo para análise estrutural português↔inglês.
+    Diferente de CommonMistake - foca em PREVENÇÃO via contraste estrutural.
+    
+    Usado pelo L1InterferenceAnalyzer para análise preventiva.
+    """
+    
+    # Estruturas contrastivas
+    portuguese: str = Field(..., description="Versão/estrutura em português")
+    english_wrong: str = Field(..., description="Inglês incorreto (transferência literal)")
+    english_correct: str = Field(..., description="Inglês correto")
+    
+    # Análise pedagógica
+    teaching_point: str = Field(..., description="Ponto de ensino principal")
+    structural_difference: str = Field(..., description="Diferença estrutural específica")
+    interference_type: str = Field(..., description="Tipo de interferência")
+    
+    # Contexto pedagógico
+    cefr_level: str = Field(default="A2", description="Nível CEFR relevante")
+    difficulty_level: str = Field(default="medium", description="Nível de dificuldade")
+    prevention_strategy: str = Field(default="contrastive_awareness", description="Estratégia de prevenção")
+    
+    # Exemplos práticos
+    additional_examples: List[str] = Field(default=[], description="Exemplos adicionais")
+    practice_sentences: List[str] = Field(default=[], description="Frases para prática")
+    
+    # Metadados
+    linguistic_explanation: Optional[str] = Field(None, description="Explicação linguística detalhada")
+    common_in_context: Optional[str] = Field(None, description="Contexto onde é comum")
+    
+    @field_validator('interference_type')
+    @classmethod
+    def validate_interference_type(cls, v: str) -> str:
+        """Validar tipo de interferência."""
+        valid_types = {
+            "grammatical_structure",     # Diferenças gramaticais
+            "word_order",               # Ordem das palavras
+            "article_usage",            # Uso de artigos
+            "verb_construction",        # Construção verbal
+            "preposition_pattern",      # Padrões de preposição
+            "pronoun_usage",           # Uso de pronomes
+            "tense_aspect",            # Tempo e aspecto
+            "modality_expression",     # Expressão de modalidade
+            "negation_pattern",        # Padrões de negação
+            "question_formation",      # Formação de perguntas
+            "comparative_structure",   # Estruturas comparativas
+            "possession_expression"    # Expressão de posse
+        }
+        
+        if v not in valid_types:
+            raise ValueError(f"Tipo de interferência deve ser um de: {', '.join(valid_types)}")
+        
+        return v
+    
+    @field_validator('difficulty_level')
+    @classmethod
+    def validate_difficulty_level(cls, v: str) -> str:
+        """Validar nível de dificuldade."""
+        valid_levels = {"very_easy", "easy", "medium", "hard", "very_hard"}
+        
+        if v not in valid_levels:
+            raise ValueError(f"Nível de dificuldade deve ser um de: {', '.join(valid_levels)}")
+        
+        return v
+    
+    @field_validator('prevention_strategy')
+    @classmethod
+    def validate_prevention_strategy(cls, v: str) -> str:
+        """Validar estratégia de prevenção."""
+        valid_strategies = {
+            "contrastive_awareness",     # Conscientização contrastiva
+            "explicit_instruction",     # Instrução explícita
+            "pattern_recognition",      # Reconhecimento de padrões
+            "controlled_practice",      # Prática controlada
+            "error_anticipation",       # Antecipação de erros
+            "structural_comparison",    # Comparação estrutural
+            "metalinguistic_awareness", # Consciência metalinguística
+            "form_focused_instruction"  # Instrução focada na forma
+        }
+        
+        if v not in valid_strategies:
+            raise ValueError(f"Estratégia deve ser uma de: {', '.join(valid_strategies)}")
+        
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "portuguese": "Eu tenho 25 anos",
+                "english_wrong": "I have 25 years",
+                "english_correct": "I am 25 years old",
+                "teaching_point": "Age expression uses BE + years old, not HAVE + years",
+                "structural_difference": "Portuguese uses HAVE + age, English uses BE + age + 'years old'",
+                "interference_type": "verb_construction",
+                "cefr_level": "A1",
+                "difficulty_level": "medium",
+                "prevention_strategy": "contrastive_awareness",
+                "additional_examples": [
+                    "She is 30 years old (not: She has 30 years)",
+                    "How old are you? (not: How many years do you have?)"
+                ],
+                "practice_sentences": [
+                    "My brother ___ 22 years old. (is)",
+                    "How old ___ your sister? (is)"
+                ],
+                "linguistic_explanation": "Portuguese 'ter idade' vs English 'be age years old' represents different conceptualization of age as possession vs state",
+                "common_in_context": "Basic personal information, introductions"
+            }
+        }
+    }
+
+
+class ContrastiveExampleSection(BaseModel):
+    """Seção de exemplos contrastivos para uma unidade - ANÁLISE ESTRUTURAL."""
+    examples: List[ContrastiveExample] = Field(..., description="Lista de exemplos contrastivos")
+    total_examples: int = Field(..., description="Total de exemplos")
+    
+    # Análise da seção
+    main_interference_types: List[str] = Field(default=[], description="Principais tipos de interferência")
+    prevention_focus: str = Field(..., description="Foco principal de prevenção")
+    difficulty_assessment: str = Field(default="medium", description="Avaliação de dificuldade geral")
+    
+    # Recomendações pedagógicas
+    teaching_sequence: List[str] = Field(default=[], description="Sequência recomendada de ensino")
+    practice_activities: List[str] = Field(default=[], description="Atividades de prática sugeridas")
+    
+    # Metadados
+    target_cefr_level: str = Field(..., description="Nível CEFR alvo")
+    brazilian_learner_focus: bool = Field(True, description="Foco em aprendizes brasileiros")
+    
+    generated_at: datetime = Field(default_factory=datetime.now)
+    
+    @field_validator('total_examples')
+    @classmethod
+    def validate_total_examples(cls, v: int, info: ValidationInfo) -> int:
+        """Validar contagem total."""
+        if hasattr(info, 'data') and 'examples' in info.data:
+            examples = info.data['examples']
+            if v != len(examples):
+                return len(examples)
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "examples": [
+                    {
+                        "portuguese": "Eu tenho 25 anos",
+                        "english_wrong": "I have 25 years", 
+                        "english_correct": "I am 25 years old",
+                        "teaching_point": "Age expression difference",
+                        "structural_difference": "Portuguese TER vs English BE",
+                        "interference_type": "verb_construction"
+                    }
+                ],
+                "total_examples": 1,
+                "main_interference_types": ["verb_construction"],
+                "prevention_focus": "Structural awareness of PT vs EN verb usage",
+                "difficulty_assessment": "medium",
+                "teaching_sequence": [
+                    "Present Portuguese structure",
+                    "Show English equivalent", 
+                    "Highlight difference",
+                    "Practice correct form"
+                ],
+                "practice_activities": [
+                    "Contrastive comparison exercises",
+                    "Error identification tasks",
+                    "Controlled production practice"
+                ],
+                "target_cefr_level": "A1",
+                "brazilian_learner_focus": True
+            }
+        }
+    }
+
+
+# =============================================================================
+# UTILITY FUNCTIONS PARA CONTRASTIVE EXAMPLES
+# =============================================================================
+
+def create_contrastive_example(
+    portuguese: str,
+    english_wrong: str,
+    english_correct: str,
+    teaching_point: str,
+    structural_difference: str = "",
+    interference_type: str = "grammatical_structure",
+    cefr_level: str = "A2",
+    difficulty_level: str = "medium",
+    prevention_strategy: str = "contrastive_awareness",
+    additional_examples: List[str] = None,
+    practice_sentences: List[str] = None
+) -> ContrastiveExample:
+    """Criar um exemplo contrastivo estruturado."""
+    return ContrastiveExample(
+        portuguese=portuguese,
+        english_wrong=english_wrong,
+        english_correct=english_correct,
+        teaching_point=teaching_point,
+        structural_difference=structural_difference or f"Portuguese vs English structural difference",
+        interference_type=interference_type,
+        cefr_level=cefr_level,
+        difficulty_level=difficulty_level,
+        prevention_strategy=prevention_strategy,
+        additional_examples=additional_examples or [],
+        practice_sentences=practice_sentences or []
+    )
+
+
+def get_common_contrastive_examples_for_brazilians() -> List[ContrastiveExample]:
+    """Retornar exemplos contrastivos comuns para brasileiros."""
+    return [
+        ContrastiveExample(
+            portuguese="Eu tenho 25 anos",
+            english_wrong="I have 25 years",
+            english_correct="I am 25 years old",
+            teaching_point="Age expression uses BE + years old, not HAVE + years",
+            structural_difference="Portuguese: TER + idade | English: BE + idade + years old",
+            interference_type="verb_construction",
+            cefr_level="A1",
+            difficulty_level="medium",
+            prevention_strategy="contrastive_awareness",
+            additional_examples=[
+                "She is 30 years old (not: She has 30 years)",
+                "How old are you? (not: How many years do you have?)"
+            ],
+            practice_sentences=[
+                "My brother ___ 22 years old. (is)",
+                "How old ___ your sister? (is)"
+            ]
+        ),
+        ContrastiveExample(
+            portuguese="Eu estou com fome",
+            english_wrong="I am with hunger",
+            english_correct="I am hungry",
+            teaching_point="Emotions/states use adjectives, not 'with + noun'",
+            structural_difference="Portuguese: ESTAR COM + substantivo | English: BE + adjetivo",
+            interference_type="grammatical_structure",
+            cefr_level="A1",
+            difficulty_level="easy",
+            prevention_strategy="pattern_recognition",
+            additional_examples=[
+                "I am thirsty (not: I am with thirst)",
+                "I am tired (not: I am with tiredness)"
+            ],
+            practice_sentences=[
+                "She is ___ after the long walk. (tired)",
+                "Are you ___? There's food in the kitchen. (hungry)"
+            ]
+        ),
+        ContrastiveExample(
+            portuguese="A vida é bela",
+            english_wrong="The life is beautiful",
+            english_correct="Life is beautiful",
+            teaching_point="Abstract nouns don't need definite article in generalizations",
+            structural_difference="Portuguese: artigo + substantivo abstrato | English: substantivo abstrato (sem artigo)",
+            interference_type="article_usage",
+            cefr_level="A2",
+            difficulty_level="hard",
+            prevention_strategy="explicit_instruction",
+            additional_examples=[
+                "Love is important (not: The love is important)",
+                "Music is universal (not: The music is universal)"
+            ],
+            practice_sentences=[
+                "___ is the key to happiness. (Love)",
+                "___ helps us relax. (Music)"
+            ]
+        ),
+        ContrastiveExample(
+            portuguese="Ela é mais alta que eu",
+            english_wrong="She is more tall than me",
+            english_correct="She is taller than me",
+            teaching_point="Short adjectives use -er, not 'more + adjective'",
+            structural_difference="Portuguese: MAIS + adjetivo | English: adjetivo-ER (para adj. curtos)",
+            interference_type="comparative_structure",
+            cefr_level="A2",
+            difficulty_level="medium",
+            prevention_strategy="pattern_recognition",
+            additional_examples=[
+                "He is faster than his brother (not: more fast)",
+                "This book is better than that one (not: more good)"
+            ],
+            practice_sentences=[
+                "This car is ___ than mine. (faster)",
+                "My house is ___ than yours. (bigger)"
+            ]
+        )
+    ]
+
+
+def analyze_contrastive_pattern(
+    portuguese_structure: str,
+    english_structure: str,
+    examples: List[str] = None
+) -> Dict[str, Any]:
+    """Analisar padrão contrastivo entre português e inglês."""
+    return {
+        "portuguese_pattern": portuguese_structure,
+        "english_pattern": english_structure,
+        "structural_differences": [
+            "Analyze word order differences",
+            "Analyze verb construction differences", 
+            "Analyze article usage differences",
+            "Analyze preposition usage differences"
+        ],
+        "interference_likelihood": "high" if "ter" in portuguese_structure.lower() else "medium",
+        "teaching_recommendations": [
+            "Use explicit contrastive explanation",
+            "Provide controlled practice",
+            "Create awareness activities",
+            "Use error anticipation exercises"
+        ],
+        "examples_provided": examples or [],
+        "analysis_confidence": 0.85
+    }
 # =============================================================================
 # FORWARD REFERENCES FIX - PYDANTIC V2 COMPATIBLE
 # =============================================================================
@@ -1483,7 +2052,14 @@ __all__ = [
     "analyze_text_for_l1_interference",
     "create_common_mistake",
     "get_common_brazilian_mistakes",
-    "analyze_text_for_common_mistakes"
+    "analyze_text_for_common_mistakes",
+
+    #Constrative Example Models
+    "ContrastiveExample",
+    "ContrastiveExampleSection", 
+    "create_contrastive_example",
+    "get_common_contrastive_examples_for_brazilians",
+    "analyze_contrastive_pattern"
 ]
 
 # Versioning para Pydantic V2
