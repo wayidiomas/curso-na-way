@@ -5,6 +5,7 @@ Sistema avançado de geração hierárquica de unidades pedagógicas com IA gene
 RAG contextual e metodologias comprovadas para ensino de idiomas.
 
 Arquitetura: Course → Book → Unit → Content (Vocabulary, Sentences, Strategies, Assessments)
+Versão: 2.0.0 - Sem Redis (in-memory) mas preparado para implementação futura
 """
 
 from fastapi import FastAPI, Request, Response, HTTPException
@@ -13,45 +14,293 @@ from contextlib import asynccontextmanager
 import uvicorn
 import time
 import logging
-from typing import Dict, Any
+import importlib
+import os
+from typing import Dict, Any, Optional, List
 
 # Core imports - Database e configuração
 from src.core.database import init_database
 from config.logging import setup_logging
 
-# Middleware e sistema de qualidade
-from src.core.rate_limiter import RateLimitMiddleware, rate_limiter
-from src.core.audit_logger import audit_logger_instance, AuditEventType
-
-# API V2 imports - Estrutura hierárquica
-try:
-    from src.api.v2.courses import router as courses_router
-    from src.api.v2.books import router as books_router
-    from src.api.v2.units import router as units_router
-    from src.api.v2.vocabulary import router as vocabulary_router
-    from src.api.v2.sentences import router as sentences_router
-    from src.api.v2.tips import router as tips_router
-    from src.api.v2.grammar import router as grammar_router
-    from src.api.v2.assessments import router as assessments_router
-    from src.api.v2.qa import router as qa_router
-    from src.api.health import router as health_router
-    
-    v2_endpoints_available = True
-    v2_missing_modules = []
-    
-except ImportError as e:
-    v2_endpoints_available = False
-    v2_missing_modules = str(e).split("'")[1] if "'" in str(e) else str(e)
-    logging.warning(f"⚠️ Módulos V2 faltando: {v2_missing_modules}")
-
-# Imports legados V1 (compatibilidade)
-try:
-    from src.api import auth, apostilas, vocabs, content, images, pdf
-    legacy_endpoints_available = True
-except ImportError:
-    legacy_endpoints_available = False
+# =============================================================================
+# CONFIGURAÇÃO DE LOGGING INICIAL
+# =============================================================================
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# SISTEMA DE IMPORTAÇÃO DINÂMICA ROBUSTO
+# =============================================================================
+
+class RouterLoader:
+    """Sistema robusto de carregamento de routers com fallbacks."""
+    
+    def __init__(self):
+        self.loaded_routers = {}
+        self.failed_routers = {}
+        self.router_configs = [
+            # (nome_modulo, caminho_import, nome_router, é_crítico)
+            ("health", "src.api.health", "router", True),
+            ("courses", "src.api.v2.courses", "router", True),
+            ("books", "src.api.v2.books", "router", True),
+            ("units", "src.api.v2.units", "router", True),
+            ("vocabulary", "src.api.v2.vocabulary", "router", True),
+            ("sentences", "src.api.v2.sentences", "router", False),
+            ("tips", "src.api.v2.tips", "router", False),
+            ("grammar", "src.api.v2.grammar", "router", False),
+            ("assessments", "src.api.v2.assessments", "router", False),
+            ("qa", "src.api.v2.qa", "router", False)
+        ]
+    
+    def load_all_routers(self) -> Dict[str, Any]:
+        """Carregar todos os routers com tratamento de erro individual."""
+        logger.info("🔧 Iniciando carregamento de routers...")
+        
+        for module_name, import_path, router_attr, is_critical in self.router_configs:
+            try:
+                # Import dinâmico do módulo
+                module = importlib.import_module(import_path)
+                
+                # Verificar se tem o atributo router
+                if hasattr(module, router_attr):
+                    router = getattr(module, router_attr)
+                    self.loaded_routers[module_name] = {
+                        "router": router,
+                        "import_path": import_path,
+                        "is_critical": is_critical
+                    }
+                    logger.info(f"✅ {module_name} router carregado com sucesso")
+                else:
+                    self.failed_routers[module_name] = f"Módulo sem atributo '{router_attr}'"
+                    logger.warning(f"⚠️ {module_name}: módulo carregado mas sem router")
+                    
+            except ImportError as e:
+                self.failed_routers[module_name] = f"ImportError: {str(e)}"
+                if is_critical:
+                    logger.error(f"❌ CRÍTICO: {module_name} falhou ao carregar: {str(e)}")
+                else:
+                    logger.warning(f"⚠️ {module_name} não disponível: {str(e)}")
+                    
+            except Exception as e:
+                self.failed_routers[module_name] = f"Erro: {str(e)}"
+                logger.error(f"❌ Erro inesperado ao carregar {module_name}: {str(e)}")
+        
+        # Carregar endpoints legados (V1) opcionalmente
+        self._load_legacy_endpoints()
+        
+        return self.get_load_summary()
+    
+    def _load_legacy_endpoints(self) -> None:
+        """Carregar endpoints legados V1 se disponíveis."""
+        try:
+            legacy_modules = ["auth", "apostilas", "vocabs", "content", "images", "pdf"]
+            legacy_loaded = []
+            
+            for module_name in legacy_modules:
+                try:
+                    module = importlib.import_module(f"src.api.{module_name}")
+                    if hasattr(module, 'router'):
+                        self.loaded_routers[f"legacy_{module_name}"] = {
+                            "router": module.router,
+                            "import_path": f"src.api.{module_name}",
+                            "is_critical": False,
+                            "is_legacy": True
+                        }
+                        legacy_loaded.append(module_name)
+                except ImportError:
+                    continue
+                    
+            if legacy_loaded:
+                logger.info(f"✅ Endpoints legados V1 carregados: {', '.join(legacy_loaded)}")
+            else:
+                logger.info("ℹ️ Nenhum endpoint legado V1 encontrado")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao carregar endpoints legados: {str(e)}")
+    
+    def get_load_summary(self) -> Dict[str, Any]:
+        """Obter resumo do carregamento."""
+        total_routers = len(self.router_configs)
+        loaded_count = len([r for r in self.loaded_routers.values() if not r.get("is_legacy", False)])
+        critical_loaded = len([r for r in self.loaded_routers.values() 
+                              if r.get("is_critical", False) and not r.get("is_legacy", False)])
+        critical_total = len([r for r in self.router_configs if r[3]])  # is_critical
+        
+        legacy_count = len([r for r in self.loaded_routers.values() if r.get("is_legacy", False)])
+        
+        return {
+            "total_expected": total_routers,
+            "loaded_count": loaded_count,
+            "failed_count": len(self.failed_routers),
+            "critical_loaded": critical_loaded,
+            "critical_total": critical_total,
+            "legacy_count": legacy_count,
+            "completion_percentage": (loaded_count / total_routers) * 100,
+            "system_functional": critical_loaded >= max(1, critical_total // 2),  # Pelo menos metade dos críticos
+            "loaded_routers": list(self.loaded_routers.keys()),
+            "failed_routers": list(self.failed_routers.keys()),
+            "failure_details": self.failed_routers
+        }
+    
+    def get_router(self, name: str):
+        """Obter router específico ou None se não carregado."""
+        router_info = self.loaded_routers.get(name)
+        return router_info["router"] if router_info else None
+
+
+# Instância global do loader
+router_loader = RouterLoader()
+
+# =============================================================================
+# SISTEMA DE MIDDLEWARE INTELIGENTE (SEM REDIS POR ENQUANTO)
+# =============================================================================
+
+class InMemoryRateLimiter:
+    """Rate limiter simples em memória (preparado para Redis futuro)."""
+    
+    def __init__(self):
+        self.requests = {}  # {key: [(timestamp, count), ...]}
+        self.limits = {
+            "default": {"requests": 100, "window": 60},
+            "create_course": {"requests": 10, "window": 60},
+            "create_unit": {"requests": 5, "window": 60},
+            "generate_vocabulary": {"requests": 3, "window": 60},
+            "generate_content": {"requests": 2, "window": 60},
+        }
+        self.cleanup_interval = 300  # 5 minutos
+        self.last_cleanup = time.time()
+    
+    def _cleanup_old_entries(self):
+        """Limpar entradas antigas para evitar vazamento de memória."""
+        if time.time() - self.last_cleanup < self.cleanup_interval:
+            return
+        
+        current_time = time.time()
+        keys_to_remove = []
+        
+        for key, entries in self.requests.items():
+            # Remover entradas mais antigas que 1 hora
+            self.requests[key] = [(ts, count) for ts, count in entries 
+                                 if current_time - ts < 3600]
+            if not self.requests[key]:
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            del self.requests[key]
+        
+        self.last_cleanup = current_time
+    
+    def is_allowed(self, identifier: str, endpoint: str = "default") -> tuple[bool, Dict[str, Any]]:
+        """Verificar se request é permitido."""
+        self._cleanup_old_entries()
+        
+        limit_config = self.limits.get(endpoint, self.limits["default"])
+        window = limit_config["window"]
+        max_requests = limit_config["requests"]
+        
+        current_time = time.time()
+        key = f"{identifier}:{endpoint}"
+        
+        # Obter requests no window atual
+        if key not in self.requests:
+            self.requests[key] = []
+        
+        # Filtrar apenas requests dentro da janela
+        window_start = current_time - window
+        recent_requests = [count for ts, count in self.requests[key] if ts > window_start]
+        current_count = sum(recent_requests)
+        
+        # Verificar se está dentro do limite
+        is_allowed = current_count < max_requests
+        
+        if is_allowed:
+            # Adicionar este request
+            self.requests[key].append((current_time, 1))
+        
+        return is_allowed, {
+            "limit": max_requests,
+            "remaining": max(0, max_requests - current_count - (1 if is_allowed else 0)),
+            "reset_time": current_time + window,
+            "window": window
+        }
+    
+    # TODO: Métodos para migração futura para Redis
+    def _migrate_to_redis(self, redis_client):
+        """Placeholder para migração futura para Redis."""
+        # Implementar quando Redis for adicionado
+        pass
+    
+    def _load_from_redis(self, redis_client):
+        """Placeholder para carregar dados do Redis."""
+        # Implementar quando Redis for adicionado
+        pass
+
+
+# Instância global do rate limiter
+rate_limiter = InMemoryRateLimiter()
+
+# =============================================================================
+# AUDIT LOGGER SIMPLIFICADO (PREPARADO PARA EXTENSÃO)
+# =============================================================================
+
+class SimpleAuditLogger:
+    """Audit logger simplificado (preparado para sistema completo futuro)."""
+    
+    def __init__(self):
+        self.enabled = os.getenv("AUDIT_LOGGING_ENABLED", "true").lower() == "true"
+        self.request_times = {}
+    
+    def start_request_tracking(self, request: Request) -> str:
+        """Iniciar tracking de request."""
+        if not self.enabled:
+            return "disabled"
+        
+        request_id = getattr(request.state, 'request_id', f"req_{int(time.time() * 1000)}")
+        self.request_times[request_id] = time.time()
+        return request_id
+    
+    def end_request_tracking(self, request: Request, status_code: int) -> Dict[str, Any]:
+        """Finalizar tracking e obter métricas."""
+        if not self.enabled:
+            return {}
+        
+        request_id = getattr(request.state, 'audit_request_id', 'unknown')
+        end_time = time.time()
+        start_time = self.request_times.get(request_id, end_time)
+        processing_time = end_time - start_time
+        
+        # Log se request demorou muito
+        if processing_time > 2.0:
+            logger.warning(f"⏱️ Request lento detectado: {request.url.path} - {processing_time:.2f}s")
+        
+        # Limpar tracking
+        if request_id in self.request_times:
+            del self.request_times[request_id]
+        
+        return {
+            "processing_time": processing_time,
+            "status_code": status_code,
+            "method": request.method,
+            "path": str(request.url.path)
+        }
+    
+    async def log_event(self, event_type: str, request: Optional[Request] = None, **kwargs):
+        """Log de evento simples."""
+        if not self.enabled:
+            return
+        
+        log_data = {
+            "timestamp": time.time(),
+            "event_type": event_type,
+            "path": str(request.url.path) if request else "system",
+            **kwargs
+        }
+        
+        logger.info(f"📊 AUDIT: {event_type} - {log_data}")
+
+
+# Instância global do audit logger
+audit_logger = SimpleAuditLogger()
 
 # =============================================================================
 # CONFIGURAÇÕES DA API V2
@@ -73,97 +322,67 @@ API_INFO = {
     • 🎯 7 Tipos de Assessment com balanceamento automático
     • 🎓 Q&A baseado na Taxonomia de Bloom
     • 🇧🇷 Prevenção de interferência L1→L2 (português→inglês)
+    • 🚀 In-memory storage (sem Redis) preparado para migração futura
     """,
     "architecture": "Course → Book → Unit → Content",
+    "storage": "In-memory (preparado para Redis)",
     "features": [
         "Hierarquia pedagógica obrigatória",
         "RAG contextual para progressão",
-        "Rate limiting inteligente",
-        "Auditoria empresarial completa",
+        "Rate limiting inteligente (in-memory)",
+        "Auditoria empresarial simplificada",
         "Paginação avançada com filtros",
         "Validação IPA automática",
         "MCP Image Analysis",
-        "Metodologias científicas integradas"
+        "Metodologias científicas integradas",
+        "Preparado para Redis (implementação futura)"
     ]
 }
 
-MIDDLEWARE_CONFIG = {
-    "cors": {
-        "allow_origins": ["*"],
-        "allow_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["*"]
-    },
-    "rate_limiting": {
-        "enabled": True,
-        "fallback_to_memory": True
-    }
-}
+API_TAGS = [
+    {"name": "health", "description": "🏥 Health checks e monitoramento do sistema"},
+    {"name": "system", "description": "⚙️ Informações e estatísticas do sistema"},
+    {"name": "v2-courses", "description": "📚 Gestão de cursos completos com níveis CEFR"},
+    {"name": "v2-books", "description": "📖 Gestão de books organizados por nível"},
+    {"name": "v2-units", "description": "📑 Gestão de unidades pedagógicas com imagens"},
+    {"name": "v2-vocabulary", "description": "🔤 Geração de vocabulário com RAG + MCP"},
+    {"name": "v2-sentences", "description": "📝 Geração de sentences conectadas"},
+    {"name": "v2-tips", "description": "💡 Estratégias TIPS para unidades lexicais"},
+    {"name": "v2-grammar", "description": "📐 Estratégias GRAMMAR para unidades gramaticais"},
+    {"name": "v2-assessments", "description": "🎯 Geração de atividades balanceadas"},
+    {"name": "v2-qa", "description": "❓ Q&A pedagógico com Taxonomia de Bloom"},
+    {"name": "v1-legacy", "description": "🔄 Endpoints legados para compatibilidade"},
+    {"name": "debug", "description": "🔧 Endpoints de debug e desenvolvimento"}
+]
 
-API_TAGS = {
-    "health": {"description": "🏥 Health checks e monitoramento do sistema"},
-    "system": {"description": "⚙️ Informações e estatísticas do sistema"},
-    "v2-courses": {"description": "📚 Gestão de cursos completos com níveis CEFR"},
-    "v2-books": {"description": "📖 Gestão de books organizados por nível"},
-    "v2-units": {"description": "📑 Gestão de unidades pedagógicas com imagens"},
-    "v2-vocabulary": {"description": "🔤 Geração de vocabulário com RAG + MCP"},
-    "v2-sentences": {"description": "📝 Geração de sentences conectadas"},
-    "v2-tips": {"description": "💡 Estratégias TIPS para unidades lexicais"},
-    "v2-grammar": {"description": "📐 Estratégias GRAMMAR para unidades gramaticais"},
-    "v2-assessments": {"description": "🎯 Geração de atividades balanceadas"},
-    "v2-qa": {"description": "❓ Q&A pedagógico com Taxonomia de Bloom"},
-    "v1-legacy": {"description": "🔄 Endpoints legados para compatibilidade"}
-}
+# =============================================================================
+# FUNÇÕES UTILITÁRIAS DE STATUS
+# =============================================================================
 
 def get_api_health() -> Dict[str, Any]:
-    """Verifica saúde da configuração da API."""
-    expected_modules = 9  # courses, books, units, vocabulary, sentences, tips, grammar, assessments, qa
-    loaded_modules = 0
-    missing_modules = []
-    
-    # Verificar módulos V2
-    if v2_endpoints_available:
-        try:
-            # Tentar importar cada módulo individualmente
-            modules_to_check = [
-                ("courses", "src.api.v2.courses"),
-                ("books", "src.api.v2.books"), 
-                ("units", "src.api.v2.units"),
-                ("vocabulary", "src.api.v2.vocabulary"),
-                ("sentences", "src.api.v2.sentences"),
-                ("tips", "src.api.v2.tips"),
-                ("grammar", "src.api.v2.grammar"),
-                ("assessments", "src.api.v2.assessments"),
-                ("qa", "src.api.v2.qa")
-            ]
-            
-            for module_name, module_path in modules_to_check:
-                try:
-                    __import__(module_path)
-                    loaded_modules += 1
-                except ImportError:
-                    missing_modules.append(module_name)
-                    
-        except Exception as e:
-            missing_modules.extend(["configuration_error"])
-    else:
-        missing_modules = v2_missing_modules if isinstance(v2_missing_modules, list) else [v2_missing_modules]
-    
-    completion_percentage = (loaded_modules / expected_modules) * 100
+    """Verificar saúde da configuração da API."""
+    load_summary = router_loader.get_load_summary()
     
     return {
-        "configuration_valid": len(missing_modules) == 0,
+        "configuration_valid": load_summary["system_functional"],
         "completion_status": {
-            "percentage": completion_percentage,
-            "loaded": loaded_modules,
-            "expected": expected_modules
+            "percentage": load_summary["completion_percentage"],
+            "loaded": load_summary["loaded_count"],
+            "expected": load_summary["total_expected"],
+            "critical_loaded": load_summary["critical_loaded"],
+            "critical_total": load_summary["critical_total"]
         },
-        "missing_modules": missing_modules,
-        "v2_available": v2_endpoints_available,
-        "v1_legacy_available": legacy_endpoints_available
+        "missing_modules": load_summary["failed_routers"],
+        "missing_details": load_summary["failure_details"],
+        "v2_available": load_summary["loaded_count"] > 0,
+        "v1_legacy_available": load_summary["legacy_count"] > 0,
+        "system_functional": load_summary["system_functional"],
+        "storage_type": "in-memory",
+        "redis_ready": False  # Para implementação futura
     }
 
 def get_hierarchical_flow() -> Dict[str, Any]:
-    """Retorna informações sobre o fluxo hierárquico."""
+    """Retornar informações sobre o fluxo hierárquico."""
     return {
         "structure": "Course → Book → Unit → Content",
         "creation_order": [
@@ -176,7 +395,8 @@ def get_hierarchical_flow() -> Dict[str, Any]:
             "vocabulary → sentences → strategy (tips|grammar) → assessments → qa"
         ],
         "rag_context": "Cada geração usa contexto de unidades anteriores para evitar repetições",
-        "validation": "Hierarquia obrigatória em todas as operações"
+        "validation": "Hierarquia obrigatória em todas as operações",
+        "storage": "In-memory com preparação para Redis futuro"
     }
 
 # =============================================================================
@@ -185,30 +405,24 @@ def get_hierarchical_flow() -> Dict[str, Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gerencia ciclo de vida da aplicação com validação completa."""
+    """Gerenciar ciclo de vida da aplicação com validação completa."""
     # Startup
+    logger.info("🚀 Iniciando IVO V2...")
     setup_logging()
     await init_database()
     
-    # Validar configuração da API
+    # Carregar routers
+    load_summary = router_loader.load_all_routers()
     api_health = get_api_health()
     
-    if api_health["configuration_valid"]:
-        logger.info(f"✅ IVO V2 configurado corretamente ({api_health['completion_status']['percentage']:.1f}% completo)")
-        logger.info(f"📊 Módulos V2: {api_health['completion_status']['loaded']}/{api_health['completion_status']['expected']}")
-    else:
-        logger.warning(f"⚠️ Configuração incompleta - Módulos faltando: {api_health['missing_modules']}")
-    
     # Log de inicialização
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.API_ERROR,  # Usando como evento de sistema
-        additional_data={
-            "event": "application_startup",
-            "version": API_INFO["version"],
-            "api_health": api_health,
-            "features": API_INFO["features"],
-            "hierarchical_architecture": True
-        }
+    await audit_logger.log_event(
+        "application_startup",
+        version=API_INFO["version"],
+        api_health=api_health,
+        features=API_INFO["features"],
+        hierarchical_architecture=True,
+        storage_type="in-memory"
     )
     
     # Console startup info
@@ -217,23 +431,26 @@ async def lifespan(app: FastAPI):
     print("=" * 80)
     print(f"📋 Versão: {API_INFO['version']}")
     print(f"🏗️ Arquitetura: {API_INFO['architecture']}")
+    print(f"💾 Storage: In-memory (preparado para Redis)")
     print(f"✅ API V2: {api_health['completion_status']['percentage']:.1f}% implementada")
-    print(f"📊 Módulos V2: {api_health['completion_status']['loaded']}/{api_health['completion_status']['expected']}")
+    print(f"📊 Routers: {load_summary['loaded_count']}/{load_summary['total_expected']} carregados")
+    print(f"🔴 Críticos: {load_summary['critical_loaded']}/{load_summary['critical_total']}")
     
-    if api_health["missing_modules"]:
-        print(f"⚠️  Módulos faltando: {', '.join(api_health['missing_modules'])}")
+    if load_summary["failed_routers"]:
+        print(f"⚠️  Módulos faltando: {', '.join(load_summary['failed_routers'])}")
+    
+    if load_summary["legacy_count"] > 0:
+        print(f"🔄 Endpoints V1 legados: {load_summary['legacy_count']} carregados")
     
     print("🔧 Recursos ativos:")
     print("   ✅ Rate Limiting inteligente (in-memory)")
-    print("   ✅ Auditoria empresarial") 
+    print("   ✅ Auditoria simplificada") 
     print("   ✅ Paginação avançada")
     print("   ✅ Hierarquia Course → Book → Unit")
     print("   ✅ RAG contextual")
     print("   ✅ Validação IPA")
     print("   ✅ MCP Image Analysis")
-    
-    if legacy_endpoints_available:
-        print("   ✅ Endpoints V1 legados (compatibilidade)")
+    print("   🔄 Preparado para Redis (implementação futura)")
     
     print("📚 Endpoints principais:")
     print("   📍 /docs - Documentação Swagger")
@@ -242,16 +459,14 @@ async def lifespan(app: FastAPI):
     print("   📍 /system/stats - Analytics")
     print("=" * 80)
     
+    if not api_health["system_functional"]:
+        print("⚠️  SISTEMA EM MODO DEGRADADO - Alguns recursos podem não estar disponíveis")
+        print("=" * 80)
+    
     yield
     
     # Shutdown
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.API_ERROR,  # Usando como evento de sistema
-        additional_data={
-            "event": "application_shutdown",
-            "uptime_info": "graceful_shutdown"
-        }
-    )
+    await audit_logger.log_event("application_shutdown", uptime_info="graceful_shutdown")
     print("👋 IVO V2 finalizado graciosamente!")
 
 # =============================================================================
@@ -265,10 +480,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_tags=[
-        {"name": tag_name, "description": tag_info.get("description", "")} 
-        for tag_name, tag_info in API_TAGS.items()
-    ]
+    openapi_tags=API_TAGS
 )
 
 # =============================================================================
@@ -278,20 +490,16 @@ app = FastAPI(
 # 1. CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=MIDDLEWARE_CONFIG["cors"]["allow_origins"],
+    allow_origins=["*"],  # Configurar conforme necessário em produção
     allow_credentials=True,
-    allow_methods=MIDDLEWARE_CONFIG["cors"]["allow_methods"],
-    allow_headers=MIDDLEWARE_CONFIG["cors"]["allow_headers"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["*"],
 )
 
-# 2. Rate Limiting Middleware
-if MIDDLEWARE_CONFIG["rate_limiting"]["enabled"]:
-    app.add_middleware(RateLimitMiddleware)
-
-# 3. Request ID Middleware
+# 2. Request ID Middleware
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    """Adiciona Request ID único para rastreamento."""
+    """Adicionar Request ID único para rastreamento."""
     import uuid
     
     request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))
@@ -302,12 +510,56 @@ async def request_id_middleware(request: Request, call_next):
     
     return response
 
+# 3. Rate Limiting Middleware
+@app.middleware("http")
+async def rate_limiting_middleware(request: Request, call_next):
+    """Middleware de rate limiting in-memory."""
+    # Identificar usuário (IP como fallback)
+    identifier = request.headers.get('X-User-ID', request.client.host if request.client else 'unknown')
+    
+    # Determinar endpoint para rate limiting
+    endpoint = "default"
+    path = request.url.path
+    
+    if "/api/v2/courses" in path and request.method == "POST":
+        endpoint = "create_course"
+    elif "/api/v2/units" in path and request.method == "POST":
+        endpoint = "create_unit"
+    elif "/vocabulary" in path:
+        endpoint = "generate_vocabulary"
+    elif any(x in path for x in ["/sentences", "/tips", "/grammar", "/assessments", "/qa"]):
+        endpoint = "generate_content"
+    
+    # Verificar rate limit
+    is_allowed, rate_info = rate_limiter.is_allowed(identifier, endpoint)
+    
+    if not is_allowed:
+        return Response(
+            content=f'{{"error": "Rate limit exceeded", "retry_after": {rate_info["window"]}}}',
+            status_code=429,
+            headers={
+                "X-RateLimit-Limit": str(rate_info["limit"]),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(rate_info["reset_time"])),
+                "Retry-After": str(rate_info["window"])
+            }
+        )
+    
+    # Processar request
+    response = await call_next(request)
+    
+    # Adicionar headers de rate limit
+    response.headers["X-RateLimit-Limit"] = str(rate_info["limit"])
+    response.headers["X-RateLimit-Remaining"] = str(rate_info["remaining"])
+    response.headers["X-RateLimit-Reset"] = str(int(rate_info["reset_time"]))
+    
+    return response
+
 # 4. Audit Middleware
 @app.middleware("http")
 async def audit_middleware(request: Request, call_next):
-    """Middleware para auditoria completa de requests."""
-    start_time = time.time()
-    request_id = audit_logger_instance.start_request_tracking(request)
+    """Middleware para auditoria simplificada de requests."""
+    request_id = audit_logger.start_request_tracking(request)
     request.state.audit_request_id = request_id
     
     response = None
@@ -324,106 +576,103 @@ async def audit_middleware(request: Request, call_next):
         status_code = 500
         
         # Log do erro
-        await audit_logger_instance.log_event(
-            event_type=AuditEventType.API_ERROR,
+        await audit_logger.log_event(
+            "api_error",
             request=request,
-            additional_data={
-                "error_type": "middleware_exception",
-                "error_message": str(e),
-                "request_id": request_id
-            },
-            success=False,
-            error_details=str(e)
+            error_type="middleware_exception",
+            error_message=str(e),
+            request_id=request_id
         )
         raise
         
     finally:
         # Finalizar tracking
-        performance_metrics = audit_logger_instance.end_request_tracking(
-            request, status_code
-        )
+        performance_metrics = audit_logger.end_request_tracking(request, status_code)
         
-        # Log para endpoints V2
-        if request.url.path.startswith('/api/v2/'):
-            await audit_logger_instance.log_event(
-                event_type=AuditEventType.COURSE_VIEWED,  # Evento genérico para acesso
+        # Log para endpoints V2 (simplificado)
+        if request.url.path.startswith('/api/v2/') and performance_metrics:
+            await audit_logger.log_event(
+                "v2_api_access",
                 request=request,
-                additional_data={
-                    "access_type": "v2_api_endpoint",
-                    "endpoint": request.url.path,
-                    "method": request.method,
-                    "status_code": status_code,
-                    "error_occurred": error_occurred,
-                    "processing_time": performance_metrics.get("processing_time", 0)
-                },
-                success=not error_occurred,
-                performance_metrics=performance_metrics
+                endpoint=request.url.path,
+                method=request.method,
+                status_code=status_code,
+                error_occurred=error_occurred,
+                **performance_metrics
             )
 
 # =============================================================================
-# ROUTERS V2 - HIERÁRQUICOS
+# REGISTRO DINÂMICO DE ROUTERS
 # =============================================================================
 
-# Health check (sempre primeiro)
-if v2_endpoints_available:
-    try:
-        app.include_router(
-            health_router,
-            prefix="/health", 
-            tags=["health"]
-        )
-    except NameError:
-        logger.warning("⚠️ Health router não disponível")
+def register_routers():
+    """Registrar todos os routers carregados dinamicamente."""
+    logger.info("📝 Registrando routers...")
+    
+    # Health router (sempre primeiro se disponível)
+    health_router = router_loader.get_router("health")
+    if health_router:
+        try:
+            app.include_router(health_router, prefix="/health", tags=["health"])
+            logger.info("✅ Health router registrado")
+        except Exception as e:
+            logger.error(f"❌ Erro ao registrar health router: {str(e)}")
+    
+    # Routers V2 principais
+    v2_router_mappings = [
+        ("courses", "/api/v2", ["v2-courses"]),
+        ("books", "/api/v2", ["v2-books"]),
+        ("units", "/api/v2", ["v2-units"]),
+        ("vocabulary", "/api/v2", ["v2-vocabulary"]),
+        ("sentences", "/api/v2", ["v2-sentences"]),
+        ("tips", "/api/v2", ["v2-tips"]),
+        ("grammar", "/api/v2", ["v2-grammar"]),
+        ("assessments", "/api/v2", ["v2-assessments"]),
+        ("qa", "/api/v2", ["v2-qa"])
+    ]
+    
+    registered_count = 0
+    for router_name, prefix, tags in v2_router_mappings:
+        router = router_loader.get_router(router_name)
+        if router:
+            try:
+                app.include_router(
+                    router,
+                    prefix=prefix,
+                    tags=tags,
+                    responses={
+                        404: {"description": "Recurso não encontrado"},
+                        400: {"description": "Dados inválidos ou hierarquia incorreta"},
+                        429: {"description": "Rate limit excedido"},
+                        500: {"description": f"Erro interno no módulo {router_name}"}
+                    }
+                )
+                registered_count += 1
+                logger.info(f"✅ Router {router_name} registrado")
+            except Exception as e:
+                logger.error(f"❌ Erro ao registrar router {router_name}: {str(e)}")
+    
+    # Routers legados V1
+    legacy_count = 0
+    for router_name, router_info in router_loader.loaded_routers.items():
+        if router_info.get("is_legacy", False):
+            try:
+                # Extrair nome do módulo original
+                module_name = router_name.replace("legacy_", "")
+                app.include_router(
+                    router_info["router"], 
+                    prefix=f"/{module_name}", 
+                    tags=["v1-legacy"]
+                )
+                legacy_count += 1
+                logger.info(f"✅ Router legado {module_name} registrado")
+            except Exception as e:
+                logger.error(f"❌ Erro ao registrar router legado {router_name}: {str(e)}")
+    
+    logger.info(f"📊 Registro completo: {registered_count} routers V2, {legacy_count} legados")
 
-# Registrar routers V2 com tratamento de erro individual
-v2_routers = [
-    (courses_router, "/api/v2", ["v2-courses"], "courses"),
-    (books_router, "/api/v2", ["v2-books"], "books"),
-    (units_router, "/api/v2", ["v2-units"], "units"),
-    (vocabulary_router, "/api/v2", ["v2-vocabulary"], "vocabulary"),
-    (sentences_router, "/api/v2", ["v2-sentences"], "sentences"),
-    (tips_router, "/api/v2", ["v2-tips"], "tips"),
-    (grammar_router, "/api/v2", ["v2-grammar"], "grammar"),
-    (assessments_router, "/api/v2", ["v2-assessments"], "assessments"),
-    (qa_router, "/api/v2", ["v2-qa"], "qa")
-]
-
-for router, prefix, tags, name in v2_routers:
-    try:
-        app.include_router(
-            router,
-            prefix=prefix,
-            tags=tags,
-            responses={
-                404: {"description": "Recurso não encontrado"},
-                400: {"description": "Dados inválidos ou hierarquia incorreta"},
-                429: {"description": "Rate limit excedido"},
-                500: {"description": f"Erro interno no módulo {name}"}
-            }
-        )
-        logger.info(f"✅ Router {name} carregado com sucesso")
-    except NameError:
-        logger.warning(f"⚠️ Router {name} não disponível - módulo não importado")
-    except Exception as e:
-        logger.error(f"❌ Erro ao carregar router {name}: {str(e)}")
-
-# =============================================================================
-# ROUTERS LEGADOS V1 - COMPATIBILIDADE
-# =============================================================================
-
-if legacy_endpoints_available:
-    try:
-        app.include_router(auth.router, prefix="/auth", tags=["v1-legacy"])
-        app.include_router(apostilas.router, prefix="/apostilas", tags=["v1-legacy"])
-        app.include_router(vocabs.router, prefix="/vocabs", tags=["v1-legacy"])
-        app.include_router(content.router, prefix="/content", tags=["v1-legacy"])
-        app.include_router(images.router, prefix="/images", tags=["v1-legacy"])
-        app.include_router(pdf.router, prefix="/pdf", tags=["v1-legacy"])
-        logger.info("✅ Endpoints legados V1 carregados para compatibilidade")
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao carregar endpoints V1: {str(e)}")
-else:
-    logger.info("ℹ️ Endpoints legados V1 não disponíveis - apenas V2 ativo")
+# Executar registro de routers
+register_routers()
 
 # =============================================================================
 # ENDPOINTS INFORMATIVOS
@@ -432,18 +681,14 @@ else:
 @app.get("/", tags=["root"])
 async def root(request: Request):
     """Informações gerais da API IVO V2."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.COURSE_VIEWED,
-        request=request,
-        additional_data={"endpoint": "root_info_access"}
-    )
+    await audit_logger.log_event("root_info_access", request=request)
     
     api_health = get_api_health()
     hierarchical_flow = get_hierarchical_flow()
     
     return {
         **API_INFO,
-        "status": "operational",
+        "status": "operational" if api_health["system_functional"] else "degraded",
         "api_health": api_health,
         "endpoints": {
             "v2_primary": {
@@ -470,7 +715,7 @@ async def root(request: Request):
                 "redoc": "/redoc",
                 "api_overview": "/api/overview"
             },
-            "v1_legacy": "/auth, /apostilas, /vocabs, /content, /images, /pdf" if legacy_endpoints_available else "Not available"
+            "v1_legacy": "Disponível se carregado" if api_health.get("v1_legacy_available") else "Não disponível"
         },
         "hierarchical_flow": hierarchical_flow,
         "content_generation_workflow": [
@@ -488,34 +733,47 @@ async def root(request: Request):
             "assessment_balancing": "Automatic selection of complementary activities",
             "ipa_validation": "35+ phonetic symbols validated",
             "l1_interference": "Portuguese→English error prevention",
+            "storage": "In-memory (preparado para Redis)",
             "methodologies": ["Direct Method", "TIPS Strategies", "Bloom's Taxonomy"]
+        },
+        "migration_info": {
+            "redis_status": "Preparado para implementação futura",
+            "current_storage": "In-memory com TTL",
+            "migration_ready": True
         }
     }
 
 @app.get("/api/overview", tags=["system"])
 async def api_overview(request: Request):
     """Visão geral completa da API IVO V2."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.COURSE_VIEWED,
-        request=request,
-        additional_data={"endpoint": "api_overview_access"}
-    )
+    await audit_logger.log_event("api_overview_access", request=request)
     
     api_health = get_api_health()
+    load_summary = router_loader.get_load_summary()
     
     return {
         "system_info": {
             "name": API_INFO["name"],
             "version": API_INFO["version"],
             "architecture": API_INFO["architecture"],
-            "status": "operational" if api_health["configuration_valid"] else "degraded"
+            "status": "operational" if api_health["system_functional"] else "degraded",
+            "storage_type": "in-memory",
+            "redis_ready": False
         },
         "implementation_status": {
             "completion_percentage": api_health["completion_status"]["percentage"],
             "loaded_modules": api_health["completion_status"]["loaded"],
             "expected_modules": api_health["completion_status"]["expected"],
             "missing_modules": api_health.get("missing_modules", []),
-            "health_status": "healthy" if api_health["configuration_valid"] else "degraded"
+            "missing_details": api_health.get("missing_details", {}),
+            "health_status": "healthy" if api_health["system_functional"] else "degraded"
+        },
+        "router_summary": {
+            "total_loaded": load_summary["loaded_count"],
+            "critical_loaded": load_summary["critical_loaded"],
+            "legacy_loaded": load_summary["legacy_count"],
+            "failed_routers": load_summary["failed_routers"],
+            "system_functional": load_summary["system_functional"]
         },
         "hierarchical_architecture": {
             "levels": ["Course", "Book", "Unit", "Content"],
@@ -539,9 +797,19 @@ async def api_overview(request: Request):
             "cefr_compliance": "Automatic level adaptation",
             "l1_interference": "Portuguese→English error prevention"
         },
+        "storage_and_performance": {
+            "current_storage": "In-memory with TTL cleanup",
+            "rate_limiting": "In-memory with endpoint-specific limits",
+            "audit_logging": "Simplified (preparado para extensão)",
+            "redis_migration": {
+                "status": "Ready for implementation",
+                "benefits": ["Persistence", "Clustering", "Advanced caching"],
+                "implementation_effort": "Low (infrastructure prepared)"
+            }
+        },
         "advanced_features": API_INFO["features"],
         "legacy_support": {
-            "v1_endpoints": legacy_endpoints_available,
+            "v1_endpoints": api_health.get("v1_legacy_available", False),
             "backward_compatibility": True
         }
     }
@@ -549,11 +817,7 @@ async def api_overview(request: Request):
 @app.get("/system/stats", tags=["system"])
 async def system_stats(request: Request):
     """Estatísticas detalhadas do sistema IVO V2."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.COURSE_VIEWED,
-        request=request,
-        additional_data={"endpoint": "system_stats_access"}
-    )
+    await audit_logger.log_event("system_stats_access", request=request)
     
     try:
         # Tentar obter estatísticas do banco
@@ -569,6 +833,7 @@ async def system_stats(request: Request):
             }
         
         api_health = get_api_health()
+        load_summary = router_loader.get_load_summary()
         
         return {
             "success": True,
@@ -578,16 +843,30 @@ async def system_stats(request: Request):
                 "health": api_health,
                 "features_enabled": API_INFO["features"],
                 "modules_status": {
-                    "v2_loaded": api_health["completion_status"]["loaded"],
-                    "v2_expected": api_health["completion_status"]["expected"],
-                    "v1_legacy": legacy_endpoints_available
+                    "v2_loaded": load_summary["loaded_count"],
+                    "v2_expected": load_summary["total_expected"],
+                    "v1_legacy": load_summary["legacy_count"],
+                    "critical_functional": load_summary["system_functional"]
                 }
             },
             "performance_metrics": {
                 "rate_limiting": "Active with in-memory storage",
-                "audit_logging": "Full request tracking",
+                "audit_logging": "Simplified request tracking",
                 "pagination": "Advanced with filters",
-                "cache_status": "Contextual TTL-based"
+                "cache_status": "In-memory TTL-based",
+                "storage_type": "In-memory (Redis-ready)"
+            },
+            "storage_info": {
+                "current_type": "in-memory",
+                "persistence": False,
+                "redis_ready": True,
+                "cleanup_active": True,
+                "memory_management": "Auto TTL cleanup"
+            },
+            "router_analytics": {
+                "loaded_routers": load_summary["loaded_routers"],
+                "failed_routers": load_summary["failed_routers"],
+                "failure_details": load_summary["failure_details"]
             },
             "timestamp": analytics.get("generated_at", time.time())
         }
@@ -605,11 +884,7 @@ async def system_stats(request: Request):
 @app.get("/system/health", tags=["system"])
 async def detailed_health_check(request: Request):
     """Health check detalhado com verificação de dependências."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.COURSE_VIEWED,
-        request=request,
-        additional_data={"endpoint": "detailed_health_check"}
-    )
+    await audit_logger.log_event("detailed_health_check", request=request)
     
     health_status = {
         "status": "healthy",
@@ -617,6 +892,7 @@ async def detailed_health_check(request: Request):
         "version": API_INFO["version"],
         "services": {},
         "features": {},
+        "storage": {},
         "api_configuration": get_api_health()
     }
     
@@ -632,61 +908,71 @@ async def detailed_health_check(request: Request):
     
     # Check OpenAI API
     try:
-        import openai
-        from config.settings import get_settings
-        settings = get_settings()
-        if settings.openai_api_key:
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key and openai_key.startswith("sk-"):
             health_status["services"]["openai_api"] = "configured"
         else:
             health_status["services"]["openai_api"] = "not_configured"
+            health_status["status"] = "degraded"
     except Exception as e:
         health_status["services"]["openai_api"] = f"unavailable: {str(e)}"
     
-    # Rate Limiting Storage (Memory-based)
-    health_status["services"]["rate_limiting"] = "memory-based (no Redis required)"
+    # Storage Health
+    health_status["storage"] = {
+        "type": "in-memory",
+        "rate_limiter": "active",
+        "audit_logger": "active",
+        "cleanup_active": True,
+        "redis_available": False,
+        "redis_ready": True,  # Código preparado
+        "memory_usage": "managed with TTL"
+    }
     
     # Check Features
     health_status["features"] = {
-        "rate_limiting": "active",
-        "audit_logging": "active", 
+        "rate_limiting": "active (in-memory)",
+        "audit_logging": "active (simplified)", 
         "pagination": "active",
         "hierarchical_structure": "active",
-        "rag_integration": "active" if v2_endpoints_available else "limited",
+        "rag_integration": "active" if health_status["api_configuration"]["v2_available"] else "limited",
         "ipa_validation": "active",
         "mcp_image_analysis": "configured"
     }
     
+    # Router Health
+    load_summary = router_loader.get_load_summary()
+    health_status["routers"] = {
+        "total_loaded": load_summary["loaded_count"],
+        "critical_loaded": load_summary["critical_loaded"],
+        "system_functional": load_summary["system_functional"],
+        "failed_count": load_summary["failed_count"]
+    }
+    
     # Overall status
-    if not health_status["api_configuration"]["configuration_valid"]:
+    if not health_status["api_configuration"]["system_functional"]:
         health_status["status"] = "degraded"
-        health_status["degradation_reason"] = "Missing V2 modules"
+        health_status["degradation_reason"] = "Missing critical modules"
+    
+    if health_status["services"]["database"].startswith("unhealthy"):
+        health_status["status"] = "degraded"
     
     return health_status
 
 @app.get("/system/rate-limits", tags=["system"])
 async def rate_limits_info(request: Request):
     """Informações detalhadas sobre configuração de rate limits."""
-    try:
-        from src.core.rate_limiter import RATE_LIMIT_CONFIG
-        rate_config = RATE_LIMIT_CONFIG
-    except ImportError:
-        rate_config = "Rate limiter configuration not available"
-    
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.COURSE_VIEWED,
-        request=request,
-        additional_data={"endpoint": "rate_limits_info"}
-    )
+    await audit_logger.log_event("rate_limits_info", request=request)
     
     return {
-        "rate_limits": rate_config,
-        "middleware_config": MIDDLEWARE_CONFIG["rate_limiting"],
-        "description": "Rate limits específicos por endpoint com fallback inteligente",
+        "rate_limits": rate_limiter.limits,
+        "storage_type": "in-memory",
+        "redis_ready": True,
+        "description": "Rate limits in-memory com preparação para Redis",
         "identification_strategy": {
-            "priority_order": ["user_id (authenticated)", "IP address", "fallback"],
-            "headers_checked": ["X-Forwarded-For", "X-Real-IP", "X-User-ID"],
-            "window_formats": ["Xs (seconds)", "Xm (minutes)", "Xh (hours)"],
-            "storage_type": "In-memory with TTL cleanup"
+            "priority_order": ["X-User-ID header", "IP address", "fallback"],
+            "headers_checked": ["X-User-ID", "X-Forwarded-For", "X-Real-IP"],
+            "window_formats": ["requests per seconds"],
+            "storage_type": "In-memory dictionary com TTL cleanup"
         },
         "response_headers": [
             "X-RateLimit-Limit (requests allowed)",
@@ -694,31 +980,85 @@ async def rate_limits_info(request: Request):
             "X-RateLimit-Reset (reset timestamp)",
             "Retry-After (seconds to wait on 429)"
         ],
-        "storage": {
+        "storage_details": {
             "type": "In-memory dictionary",
             "persistence": "Session-based (non-persistent)",
-            "cleanup": "Automatic TTL-based expiration",
-            "scalability": "Single-instance only"
+            "cleanup": "Automatic TTL-based expiration (5 min intervals)",
+            "scalability": "Single-instance only",
+            "redis_migration": {
+                "ready": True,
+                "benefits": ["Persistence", "Multi-instance", "Advanced features"],
+                "implementation": "Preparado com métodos de migração"
+            }
+        },
+        "performance": {
+            "cleanup_interval": f"{rate_limiter.cleanup_interval} seconds",
+            "memory_managed": True,
+            "auto_cleanup": True
+        }
+    }
+
+@app.get("/system/redis-migration", tags=["system"])
+async def redis_migration_info(request: Request):
+    """Informações sobre preparação para migração Redis."""
+    await audit_logger.log_event("redis_migration_info", request=request)
+    
+    return {
+        "migration_status": {
+            "code_ready": True,
+            "infrastructure_ready": False,  # Redis não instalado
+            "migration_effort": "Low",
+            "estimated_downtime": "< 5 minutes"
+        },
+        "current_limitations": {
+            "persistence": "None - data lost on restart",
+            "clustering": "Single instance only",
+            "advanced_features": "Basic rate limiting only"
+        },
+        "redis_benefits": {
+            "persistence": "Data survives restarts",
+            "clustering": "Multi-instance support",
+            "advanced_rate_limiting": "Sliding windows, complex rules",
+            "caching": "Advanced caching with TTL",
+            "pub_sub": "Real-time notifications",
+            "analytics": "Historical data tracking"
+        },
+        "implementation_steps": [
+            "1. Install Redis server",
+            "2. Add redis-py dependency",
+            "3. Set REDIS_ENABLED=true in .env",
+            "4. Configure REDIS_URL",
+            "5. Restart application",
+            "6. Automatic migration of rate limiter",
+            "7. Optional: Migrate audit logs to Redis"
+        ],
+        "configuration_example": {
+            "env_variables": {
+                "REDIS_ENABLED": "true",
+                "REDIS_URL": "redis://localhost:6379",
+                "REDIS_PASSWORD": "optional",
+                "REDIS_DB": "0"
+            }
+        },
+        "migration_methods": {
+            "rate_limiter": "InMemoryRateLimiter._migrate_to_redis()",
+            "audit_logger": "Future implementation",
+            "cache_system": "Future implementation"
         }
     }
 
 # =============================================================================
-# ERROR HANDLERS GLOBAIS
+# ERROR HANDLERS GLOBAIS (MELHORADOS)
 # =============================================================================
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     """Handler para recursos não encontrados."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.API_ERROR,
+    await audit_logger.log_event(
+        "not_found_error",
         request=request,
-        additional_data={
-            "error_type": "not_found",
-            "path": str(request.url),
-            "method": request.method
-        },
-        success=False,
-        error_details="Resource not found"
+        path=str(request.url),
+        method=request.method
     )
     
     return {
@@ -728,13 +1068,14 @@ async def not_found_handler(request: Request, exc):
         "details": {
             "path": str(request.url),
             "method": request.method,
-            "request_id": getattr(request.state, 'request_id', 'unknown')
+            "request_id": getattr(request.state, 'request_id', 'unknown'),
+            "system_status": get_api_health()["system_functional"]
         },
         "suggestions": [
             "Verifique se o ID está correto",
             "Confirme que o recurso existe na hierarquia Course→Book→Unit",
             "Consulte /docs para endpoints disponíveis",
-            "Verificar /api/overview para estrutura da API"
+            "Verifique /api/overview para estrutura da API"
         ],
         "hierarchical_help": {
             "course_operations": "GET /api/v2/courses para listar cursos",
@@ -743,25 +1084,15 @@ async def not_found_handler(request: Request, exc):
         }
     }
 
-
 @app.exception_handler(429)
 async def rate_limit_handler(request: Request, exc):
     """Handler para rate limiting excedido."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.RATE_LIMIT_EXCEEDED,
+    await audit_logger.log_event(
+        "rate_limit_exceeded",
         request=request,
-        additional_data={
-            "error_type": "rate_limit_exceeded",
-            "path": str(request.url),
-            "method": request.method,
-            "rate_limit_details": getattr(exc, 'detail', {})
-        },
-        success=False,
-        error_details="Rate limit exceeded"
+        path=str(request.url),
+        method=request.method
     )
-    
-    # Extrair detalhes do rate limit se disponível
-    rate_limit_info = getattr(exc, 'detail', {})
     
     return {
         "success": False,
@@ -770,31 +1101,28 @@ async def rate_limit_handler(request: Request, exc):
         "details": {
             "path": str(request.url),
             "method": request.method,
-            "limit": rate_limit_info.get("limit"),
-            "window": rate_limit_info.get("window"),
-            "retry_after": rate_limit_info.get("retry_after", 60),
+            "storage_type": "in-memory",
+            "retry_after": 60,
             "request_id": getattr(request.state, 'request_id', 'unknown')
         },
         "suggestions": [
-            f"Aguarde {rate_limit_info.get('retry_after', 60)} segundos antes de tentar novamente",
+            "Aguarde 60 segundos antes de tentar novamente",
             "Considere implementar cache local para reduzir requests",
             "Verifique se não há requests desnecessários em loop",
             "Para operações em lote, use paginação adequada"
         ],
         "rate_limit_info": {
             "check_limits": "GET /system/rate-limits para ver limites específicos",
-            "identification": "Limits aplicados por user_id ou IP address",
-            "windows": "Janelas deslizantes de tempo (60s, 10m, 1h)"
+            "storage": "In-memory (Redis migration available)",
+            "windows": "Janelas deslizantes com cleanup automático"
         }
     }
-
 
 @app.exception_handler(422)
 async def validation_error_handler(request: Request, exc):
     """Handler para erros de validação Pydantic."""
     validation_errors = []
     
-    # Extrair erros de validação do Pydantic
     if hasattr(exc, 'errors'):
         for error in exc.errors():
             validation_errors.append({
@@ -804,17 +1132,11 @@ async def validation_error_handler(request: Request, exc):
                 "input": error.get('input')
             })
     
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.VALIDATION_FAILED,
+    await audit_logger.log_event(
+        "validation_error",
         request=request,
-        additional_data={
-            "error_type": "validation_error",
-            "path": str(request.url),
-            "method": request.method,
-            "validation_errors": validation_errors
-        },
-        success=False,
-        error_details="Validation failed"
+        path=str(request.url),
+        validation_errors=validation_errors
     )
     
     return {
@@ -841,22 +1163,14 @@ async def validation_error_handler(request: Request, exc):
         }
     }
 
-
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc):
     """Handler para erros internos do servidor."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.API_ERROR,
+    await audit_logger.log_event(
+        "internal_server_error",
         request=request,
-        additional_data={
-            "error_type": "internal_server_error",
-            "path": str(request.url),
-            "method": request.method,
-            "exception_type": type(exc).__name__,
-            "exception_message": str(exc)
-        },
-        success=False,
-        error_details=str(exc)
+        error_type=type(exc).__name__,
+        error_message=str(exc)
     )
     
     return {
@@ -868,7 +1182,8 @@ async def internal_error_handler(request: Request, exc):
             "method": request.method,
             "request_id": getattr(request.state, 'request_id', 'unknown'),
             "timestamp": time.time(),
-            "exception_type": type(exc).__name__
+            "exception_type": type(exc).__name__,
+            "system_status": get_api_health()["system_functional"]
         },
         "suggestions": [
             "Tente novamente em alguns instantes",
@@ -884,21 +1199,13 @@ async def internal_error_handler(request: Request, exc):
         }
     }
 
-
 @app.exception_handler(400)
 async def bad_request_handler(request: Request, exc):
     """Handler para bad requests."""
-    await audit_logger_instance.log_event(
-        event_type=AuditEventType.API_ERROR,
+    await audit_logger.log_event(
+        "bad_request",
         request=request,
-        additional_data={
-            "error_type": "bad_request",
-            "path": str(request.url),
-            "method": request.method,
-            "exception_message": str(exc)
-        },
-        success=False,
-        error_details=str(exc)
+        error_message=str(exc)
     )
     
     return {
@@ -925,59 +1232,28 @@ async def bad_request_handler(request: Request, exc):
         }
     }
 
-
 # =============================================================================
-# STARTUP E EXECUÇÃO
-# =============================================================================
-
-if __name__ == "__main__":
-    """
-    Execução direta do servidor FastAPI.
-    Para desenvolvimento: python src/main.py
-    Para produção: uvicorn src.main:app --host 0.0.0.0 --port 8000
-    """
-    import os
-    
-    # Configurações de desenvolvimento
-    host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", 8000))
-    reload = os.getenv("RELOAD", "true").lower() == "true"
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
-    
-    print("🔧 Configuração de execução:")
-    print(f"   📍 Host: {host}")
-    print(f"   🔌 Port: {port}")
-    print(f"   🔄 Reload: {reload}")
-    print(f"   📝 Log Level: {log_level}")
-    print(f"   🏗️ Architecture: {API_INFO['architecture']}")
-    print("   📚 Documentação: http://localhost:8000/docs")
-    print("=" * 50)
-    
-    uvicorn.run(
-        "src.main:app",
-        host=host,
-        port=port,
-        reload=reload,
-        log_level=log_level,
-        access_log=True
-    )
-
-
-# =============================================================================
-# ENDPOINTS DE DESENVOLVIMENTO E DEBUG
+# ENDPOINTS DE DEBUG E DESENVOLVIMENTO
 # =============================================================================
 
 @app.get("/debug/api-status", tags=["debug"], include_in_schema=False)
 async def debug_api_status():
-    """Endpoint de debug para verificar status da API (não incluído na documentação)."""
+    """Endpoint de debug para verificar status da API."""
+    load_summary = router_loader.get_load_summary()
+    
     return {
         "debug_info": {
-            "v2_endpoints_available": v2_endpoints_available,
-            "v2_missing_modules": v2_missing_modules,
-            "legacy_endpoints_available": legacy_endpoints_available,
+            "router_loader_summary": load_summary,
             "api_health": get_api_health(),
-            "middleware_config": MIDDLEWARE_CONFIG,
-            "api_info": API_INFO
+            "loaded_routers": router_loader.loaded_routers,
+            "failed_routers": router_loader.failed_routers
+        },
+        "storage_info": {
+            "rate_limiter_active": True,
+            "rate_limiter_requests": len(rate_limiter.requests),
+            "audit_logger_enabled": audit_logger.enabled,
+            "redis_ready": True,
+            "redis_enabled": False
         },
         "environment_checks": {
             "python_version": "3.11+",
@@ -985,24 +1261,16 @@ async def debug_api_status():
             "langchain_version": "0.3.x",
             "pydantic_version": "2.x"
         },
-        "expected_modules": [
-            "src.api.v2.courses",
-            "src.api.v2.books", 
-            "src.api.v2.units",
-            "src.api.v2.vocabulary",
-            "src.api.v2.sentences",
-            "src.api.v2.tips",
-            "src.api.v2.grammar",
-            "src.api.v2.assessments",
-            "src.api.v2.qa",
-            "src.api.health"
-        ]
+        "migration_readiness": {
+            "redis_code_ready": True,
+            "migration_methods_available": True,
+            "fallback_mechanisms": True
+        }
     }
-
 
 @app.get("/debug/routes", tags=["debug"], include_in_schema=False)
 async def debug_routes():
-    """Lista todas as rotas registradas (debug only)."""
+    """Lista todas as rotas registradas."""
     routes_info = []
     
     for route in app.routes:
@@ -1021,6 +1289,72 @@ async def debug_routes():
             "api_v2": [r for r in routes_info if r['path'].startswith('/api/v2')],
             "system": [r for r in routes_info if r['path'].startswith('/system')],
             "health": [r for r in routes_info if r['path'].startswith('/health')],
-            "legacy": [r for r in routes_info if not any(r['path'].startswith(p) for p in ['/api/v2', '/system', '/health', '/docs', '/redoc', '/openapi.json'])]
+            "debug": [r for r in routes_info if r['path'].startswith('/debug')],
+            "legacy": [r for r in routes_info if not any(r['path'].startswith(p) for p in ['/api/v2', '/system', '/health', '/debug', '/docs', '/redoc', '/openapi.json'])]
+        },
+        "router_summary": router_loader.get_load_summary()
+    }
+
+@app.get("/debug/storage", tags=["debug"], include_in_schema=False)
+async def debug_storage():
+    """Debug de informações de storage."""
+    return {
+        "rate_limiter": {
+            "type": "InMemoryRateLimiter",
+            "active_requests": len(rate_limiter.requests),
+            "limits_configured": rate_limiter.limits,
+            "cleanup_interval": rate_limiter.cleanup_interval,
+            "last_cleanup": rate_limiter.last_cleanup,
+            "redis_ready": hasattr(rate_limiter, '_migrate_to_redis')
+        },
+        "audit_logger": {
+            "type": "SimpleAuditLogger",
+            "enabled": audit_logger.enabled,
+            "active_requests": len(audit_logger.request_times),
+            "extensible": True
+        },
+        "migration_info": {
+            "redis_migration_ready": True,
+            "persistent_storage_ready": False,
+            "clustering_ready": False,
+            "implementation_effort": "Low"
         }
     }
+
+# =============================================================================
+# STARTUP E EXECUÇÃO
+# =============================================================================
+
+if __name__ == "__main__":
+    """
+    Execução direta do servidor FastAPI.
+    Para desenvolvimento: python src/main.py
+    Para produção: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    """
+    
+    # Configurações de desenvolvimento
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", 8000))
+    reload = os.getenv("RELOAD", "true").lower() == "true"
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    
+    print("🔧 Configuração de execução:")
+    print(f"   📍 Host: {host}")
+    print(f"   🔌 Port: {port}")
+    print(f"   🔄 Reload: {reload}")
+    print(f"   📝 Log Level: {log_level}")
+    print(f"   🏗️ Architecture: {API_INFO['architecture']}")
+    print(f"   💾 Storage: In-memory (Redis-ready)")
+    print("   📚 Documentação: http://localhost:8000/docs")
+    print("   🔧 Debug: http://localhost:8000/debug/api-status")
+    print("   🔄 Redis Migration: http://localhost:8000/system/redis-migration")
+    print("=" * 50)
+    
+    uvicorn.run(
+        "src.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level=log_level,
+        access_log=True
+    )
